@@ -1,0 +1,148 @@
+// ============================================================
+// ENTRY POINT
+// Every Chalk program is a sequence of statements
+// ============================================================
+start: statement+
+
+// ============================================================
+// STATEMENTS
+// The '?' means: don't create a node for this rule,
+// just return the matched child directly (keeps tree clean)
+// ============================================================
+?statement: var_decl
+           | assign
+           | if_stmt
+           | while_stmt
+           | func_def
+           | return_stmt
+           | print_stmt
+           | expr_stmt
+
+// ============================================================
+// VARIABLE DECLARATION
+// mut is optional — immutable by default
+//
+// Examples:
+//   x: int = 10
+//   mut name: string = "Alice"
+// ============================================================
+var_decl: "mut"? IDENT ":" TYPE "=" expr _NEWLINE
+
+// ============================================================
+// ASSIGNMENT
+// Only allowed on 'mut' variables (checked in semantic phase)
+//
+// Example:
+//   x = 20
+// ============================================================
+assign: IDENT "=" expr _NEWLINE
+
+// ============================================================
+// IF / ELSE
+// Both branches are optional sequences of statements
+//
+// Example:
+//   if x > 5
+//     print(x)
+//   else
+//     print("nope")
+//   end
+// ============================================================
+if_stmt: "if" expr _NEWLINE statement+ ("else" _NEWLINE statement+)? "end" _NEWLINE
+
+// ============================================================
+// WHILE LOOP
+//
+// Example:
+//   while x > 0
+//     x = x - 1
+//   end
+// ============================================================
+while_stmt: "while" expr _NEWLINE statement+ "end" _NEWLINE
+
+// ============================================================
+// FUNCTION DEFINITION
+//
+// Example:
+//   def add(a: int, b: int) -> int
+//     return a + b
+//   end
+// ============================================================
+func_def: "func" IDENT "(" params? ")" "->" TYPE _NEWLINE statement+ "end" _NEWLINE
+
+// ============================================================
+// RETURN STATEMENT
+//
+// Example:
+//   return x + 1
+// ============================================================
+return_stmt: "return" expr _NEWLINE
+
+// ============================================================
+// PRINT STATEMENT (built-in for Phase 1)
+//
+// Example:
+//   print(x)
+// ============================================================
+print_stmt: "print" "(" expr ")" _NEWLINE
+
+// ============================================================
+// EXPRESSION STATEMENT
+// A bare expression on its own line, e.g. a function call:
+//   add(1, 2)
+// ============================================================
+expr_stmt: expr _NEWLINE
+
+// ============================================================
+// FUNCTION PARAMETERS
+//
+// Example:
+//   a: int, b: int
+// ============================================================
+params: param (COMMA param)*
+param:  IDENT ":" TYPE
+
+// ============================================================
+// EXPRESSIONS
+// Order of rules = operator precedence (low → high)
+// '?' keeps the tree flat when there's only one child
+// ============================================================
+?expr: comparison
+
+?comparison: addition ( ("==" | "!=" | ">" | "<" | ">=" | "<=") addition )*
+
+?addition: multiplication ( ("+" | "-") multiplication )*
+
+?multiplication: unary ( ("*" | "/") unary )*
+
+?unary: "-" unary -> negate
+      | primary
+
+?primary: NUMBER                              -> number
+        | STRING                              -> string
+        | "true"                              -> true
+        | "false"                             -> false
+        | IDENT "(" (expr (COMMA expr)*)? ")" -> func_call
+        | IDENT                               -> var
+        | "(" expr ")"
+
+// ============================================================
+// TOKENS — the basic building blocks the lexer recognizes
+// ============================================================
+TYPE: "int" | "float" | "string" | "bool"
+
+IDENT:  /[a-zA-Z_][a-zA-Z0-9_]*/ // Identifiers: must start with letter or underscore
+NUMBER: /\d+(\.\d+)?/            // Numbers: integers and floats
+STRING: /\"[^\"]*\"/             // Strings: anything between double quotes
+COMMA:  ","
+
+// ============================================================
+// WHITESPACE & COMMENTS
+// ============================================================
+COMMENT: /#[^\n]*/ // Single line comments
+
+%ignore COMMENT
+%ignore /[^\S\n]+/ // ignore spaces and tabs (but not newlines)
+%ignore /\\\n/ // ignore line continuation with backslash
+
+_NEWLINE: /\n+/
