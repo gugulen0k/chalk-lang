@@ -1,5 +1,5 @@
 # Test: function definition and calls
-func add(a: int, b: int) -> int
+func add(a: int, b: int) -> bool
   return a + b
 end
 

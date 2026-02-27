@@ -2,7 +2,7 @@
 // ENTRY POINT
 // Every Chalk program is a sequence of statements
 // ============================================================
-start: _NEWLINE statement+
+start: _NEWLINE* statement*
 
 // ============================================================
 // STATEMENTS
