@@ -89,7 +89,7 @@ class ChalkTransformer(Transformer):
 
     def func_call(self, args):
         name = str(args[0])
-        call_args = list(args[1:])
+        call_args = [a for a in args[1:] if not isinstance(a, Token)]
 
         return FuncCall(name=name, args=call_args, line=self._line(args))
 
@@ -163,7 +163,7 @@ class ChalkTransformer(Transformer):
         )
 
     def params(self, args):
-        return list(args)
+        return [a for a in args if not isinstance(a, Token)]
 
     def param(self, args):
         return (str(args[0]), str(args[1]))  # ("name", "type")
