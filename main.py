@@ -14,7 +14,7 @@ def main():
         ast = transformer.transform(raw_tree)
 
         for node in ast.statements:
-            print(node)
+            print(f"line #{node.line}, value: {node}")
 
     except Exception as e:
         print(f"Parse error: {e}")

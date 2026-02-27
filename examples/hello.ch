@@ -1,4 +1,4 @@
-a: int = 10
+mut a: int = 10
 b: int = 20
 
 if a > b

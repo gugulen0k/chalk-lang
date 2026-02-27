@@ -109,11 +109,11 @@ param:  IDENT ":" TYPE
 // ============================================================
 ?expr: comparison
 
-?comparison: addition ( ("==" | "!=" | ">" | "<" | ">=" | "<=") addition )*
+?comparison: addition (COMP_OP addition)*
 
-?addition: multiplication ( ("+" | "-") multiplication )*
+?addition: multiplication (ADD_OP multiplication)*
 
-?multiplication: unary ( ("*" | "/") unary )*
+?multiplication: unary (MUL_OP unary)*
 
 ?unary: "-" unary -> negate
       | primary
@@ -129,12 +129,14 @@ param:  IDENT ":" TYPE
 // ============================================================
 // TOKENS — the basic building blocks the lexer recognizes
 // ============================================================
-TYPE: "int" | "float" | "string" | "bool"
-
-IDENT:  /[a-zA-Z_][a-zA-Z0-9_]*/ // Identifiers: must start with letter or underscore
-NUMBER: /\d+(\.\d+)?/            // Numbers: integers and floats
-STRING: /\"[^\"]*\"/             // Strings: anything between double quotes
-COMMA:  ","
+TYPE:    "int" | "float" | "string" | "bool"   // Basic types
+COMP_OP: "==" | "!=" | ">" | "<" | ">=" | "<=" // Comparison operators
+ADD_OP:  "+" | "-"                             // Addition operators
+MUL_OP:  "*" | "/"                             // Multiplication operators
+COMMA:   ","
+IDENT:   /[a-zA-Z_][a-zA-Z0-9_]*/ // Identifiers: must start with letter or underscore
+NUMBER:  /\d+(\.\d+)?/            // Numbers: integers and floats
+STRING:  /\"[^\"]*\"/             // Strings: anything between double quotes
 
 // ============================================================
 // WHITESPACE & COMMENTS
