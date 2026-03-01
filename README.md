@@ -1,6 +1,7 @@
 # Chalk
 
-Chalk is a statically typed, interpreted language with a clean and minimal syntax.
+Chalk is a statically typed compiled language with a clean and minimal syntax.
+It compiles to C and then to a native binary via gcc.
 It uses `end` to close blocks instead of braces, and enforces explicit mutability.
 
 ---
@@ -13,6 +14,7 @@ It uses `end` to close blocks instead of braces, and enforces explicit mutabilit
 | `float`  | `3.14`           |
 | `string` | `"hello"`        |
 | `bool`   | `true`, `false`  |
+| `void`   | function return type only |
 
 ---
 
@@ -84,25 +86,33 @@ end
 ## Functions
 
 Functions are declared with `func`, take typed parameters, and require an explicit return type.
+Use `void` for functions that don't return a value — they must not contain a `return` statement.
 
 ```
 func add(a: int, b: int) -> int
   return a + b
 end
 
+func greet(name: string) -> void
+  print("hello, ", name)
+end
+
 result: int = add(3, 7)
+greet("world")
 ```
 
 ---
 
 ## Print
 
-`print` is a built-in statement for outputting a value.
+`print` is a built-in statement that accepts one or more comma-separated expressions and prints them on a single line.
 
 ```
 print("hello")
 print(42)
 print(x + y)
+print("result: ", x + y)
+print("a=", a, " b=", b)
 ```
 
 ---
@@ -128,7 +138,7 @@ end
 
 mut i: int = 1
 while i <= 5
-  print(triangle(i))
+  print("triangle(", i, ") = ", triangle(i))
   i = i + 1
 end
 ```
