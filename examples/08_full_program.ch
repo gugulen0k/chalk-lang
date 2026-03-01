@@ -18,8 +18,5 @@ func factorial(n: int) -> int
   return result
 end
 
-biggest: int = max(12, 7)
-print(biggest)
-
-fact: int = factorial(5)
-print(fact)
+print("max: ", max(12, 7))
+print("factorial: ", factorial(5))

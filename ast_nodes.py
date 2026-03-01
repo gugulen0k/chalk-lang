@@ -119,12 +119,12 @@ class FuncDef(Node):
 
 @dataclass
 class ReturnStmt(Node):
-    value: Node
+    value: Optional[Node]  # None when parsed as bare 'return'; always a semantic error
 
 
 @dataclass
 class PrintStmt(Node):
-    value: Node
+    values: list[Node]  # one or more expressions printed as a single line
 
 
 @dataclass

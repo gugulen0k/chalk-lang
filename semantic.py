@@ -111,7 +111,8 @@ class SemanticAnalyzer:
         elif isinstance(node, ReturnStmt):
             self._check_return(node)
         elif isinstance(node, PrintStmt):
-            self._check_expr(node.value)
+            for v in node.values:
+                self._check_expr(v)
         elif isinstance(node, ExprStmt):
             self._check_expr(node.value)
 
@@ -182,7 +183,8 @@ class SemanticAnalyzer:
         func_sym = FuncSymbol(node.name, node.params, node.return_type)
         self._define(node.name, func_sym)
 
-        # new scope for function body
+        # new scope for function body; save outer function context
+        # so nested function definitions restore it correctly
         self._push_scope()
         prev_func = self.current_func
         self.current_func = func_sym
@@ -198,12 +200,22 @@ class SemanticAnalyzer:
         self._pop_scope()
 
     def _check_return(self, node: ReturnStmt):
-        # return must be inside a function
         if self.current_func is None:
             self._error("'return' used outside of a function", node.line)
 
-        return_type = self._check_expr(node.value)
+        if self.current_func.return_type == "void":
+            self._error(
+                f"void function '{self.current_func.name}' must not have a return statement",
+                node.line,
+            )
 
+        if node.value is None:
+            self._error(
+                f"'{self.current_func.name}' must return a value of type '{self.current_func.return_type}'",
+                node.line,
+            )
+
+        return_type = self._check_expr(node.value)
         if return_type and return_type != self.current_func.return_type:
             self._error(
                 f"return type mismatch in '{self.current_func.name}': "

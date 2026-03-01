@@ -115,22 +115,21 @@ class ChalkTransformer(Transformer):
     def assign(self, args):
         return Assign(name=str(args[0]), value=args[1], line=self._line(args))
 
+    def else_clause(self, args):
+        return [s for s in args if isinstance(s, Node)]
+
     def if_stmt(self, args):
         condition = args[0]
-
-        # find where else starts by looking for non-Node items
-        # everything after condition is statements — split by position
         rest = args[1:]
 
-        # lark puts all then+else statements flat in args
-        # we split them by finding "else" marker — but since
-        # we don't emit a token for else, we use the grammar structure:
-        # if_stmt has condition + then_stmts + (optionally) else_stmts
-        # lark groups them, so we slice from grammar shape
-        # simplest approach: all args after condition are then_body,
-        # unless the grammar gives us two groups (handled below)
-        then_body = [s for s in rest if isinstance(s, Node)]
-        else_body = []
+        # else_clause() returns a plain list, so it's the only list in args.
+        # All then-branch statements are Node instances.
+        if rest and isinstance(rest[-1], list):
+            else_body = rest[-1]
+            then_body = [s for s in rest[:-1] if isinstance(s, Node)]
+        else:
+            then_body = [s for s in rest if isinstance(s, Node)]
+            else_body = []
 
         return IfStmt(
             condition=condition,
@@ -148,8 +147,7 @@ class ChalkTransformer(Transformer):
 
     def func_def(self, args):
         name = str(args[0])
-        # params is a list of tuples, return type is a string
-        # find where params end and return type begins
+        # params() returns a list, so args[1] is either that list or the return type string
         params = args[1] if isinstance(args[1], list) else []
         return_type = str(args[2]) if isinstance(args[1], list) else str(args[1])
         body = [s for s in args if isinstance(s, Node)]
@@ -169,10 +167,12 @@ class ChalkTransformer(Transformer):
         return (str(args[0]), str(args[1]))  # ("name", "type")
 
     def return_stmt(self, args):
-        return ReturnStmt(value=args[0], line=self._line(args))
+        value = args[0] if args and isinstance(args[0], Node) else None
+        return ReturnStmt(value=value, line=self._line(args))
 
     def print_stmt(self, args):
-        return PrintStmt(value=args[0], line=self._line(args))
+        values = [a for a in args if isinstance(a, Node)]
+        return PrintStmt(values=values, line=self._line(args))
 
     def expr_stmt(self, args):
         return ExprStmt(value=args[0], line=self._line(args))

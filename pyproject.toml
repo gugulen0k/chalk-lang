@@ -8,3 +8,9 @@ dependencies = [
   "ruff",
   "lark"
 ]
+
+[tool.setuptools]
+py-modules = ["ast_nodes", "codegen", "lexer", "main", "semantic", "transformer"]
+
+[project.scripts]
+chalk = "main:main"

@@ -39,7 +39,9 @@ assign: IDENT "=" expr _NEWLINE
 
 // ============================================================
 // IF / ELSE
-// Both branches are optional sequences of statements
+// Then branch is required; else branch is optional.
+// else_clause is a named rule so the transformer receives it
+// as a distinct object and can split the two bodies apart.
 //
 // Example:
 //   if x > 5
@@ -48,7 +50,8 @@ assign: IDENT "=" expr _NEWLINE
 //     print("nope")
 //   end
 // ============================================================
-if_stmt: _IF expr _NEWLINE statement+ (_ELSE _NEWLINE statement+)? _END _NEWLINE
+if_stmt: _IF expr _NEWLINE statement+ else_clause? _END _NEWLINE
+else_clause: _ELSE _NEWLINE statement+  // wrapped so transformer can detect it
 
 // ============================================================
 // WHILE LOOP
@@ -62,29 +65,40 @@ while_stmt: _WHILE expr _NEWLINE statement+ _END _NEWLINE
 
 // ============================================================
 // FUNCTION DEFINITION
+// Return type is required; use 'void' for functions that
+// don't return a value.
 //
-// Example:
+// Examples:
 //   func add(a: int, b: int) -> int
 //     return a + b
+//   end
+//
+//   func greet(name: string) -> void
+//     print("hello, ", name)
 //   end
 // ============================================================
 func_def: _FUNC IDENT "(" params? ")" "->" TYPE _NEWLINE statement+ _END _NEWLINE
 
 // ============================================================
 // RETURN STATEMENT
+// expr is optional at grammar level, but semantic analysis
+// requires a value for non-void functions and bans 'return'
+// entirely in void functions.
 //
 // Example:
 //   return x + 1
 // ============================================================
-return_stmt: _RETURN expr _NEWLINE
+return_stmt: _RETURN expr? _NEWLINE
 
 // ============================================================
-// PRINT STATEMENT (built-in for Phase 1)
+// PRINT STATEMENT
+// Accepts one or more comma-separated expressions.
 //
-// Example:
+// Examples:
 //   print(x)
+//   print("result: ", x, " done")
 // ============================================================
-print_stmt: _PRINT "(" expr ")" _NEWLINE
+print_stmt: _PRINT "(" expr (COMMA expr)* ")" _NEWLINE
 
 // ============================================================
 // EXPRESSION STATEMENT
@@ -129,7 +143,7 @@ param:  IDENT ":" TYPE
 // ============================================================
 // TOKENS — the basic building blocks the lexer recognizes
 // ============================================================
-TYPE:    "int" | "float" | "string" | "bool"   // Basic types
+TYPE:    "int" | "float" | "string" | "bool" | "void"   // Basic types
 COMP_OP: "==" | "!=" | ">" | "<" | ">=" | "<=" // Comparison operators
 ADD_OP:  "+" | "-"                             // Addition operators
 MUL_OP:  "*" | "/"                             // Multiplication operators
