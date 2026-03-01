@@ -34,11 +34,10 @@ class ChalkTransformer(Transformer):
     # LITERALS
     # --------------------------------------------------------
     def number(self, args):
-        val = float(args[0])
-        # store as int if it's a whole number
-        return Number(
-            value=int(val) if val.is_integer() else val, line=self._line(args)
-        )
+        raw = str(args[0])
+        # use the source token to decide: '2.0' is float, '2' is int
+        value = float(raw) if "." in raw else int(raw)
+        return Number(value=value, line=self._line(args))
 
     def string(self, args):
         raw = str(args[0])
