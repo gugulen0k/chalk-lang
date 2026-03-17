@@ -68,18 +68,18 @@ module TokenType
   EQUAL = :EQUAL # =
 
   # --- Delimiters & punctuation -------------------------------
-  LPAREN       = :LPAREN       # (
-  RPAREN       = :RPAREN       # )
-  LBRACKET     = :LBRACKET     # [
-  RBRACKET     = :RBRACKET     # ]
-  LBRACE       = :LBRACE       # {
-  RBRACE       = :RBRACE       # }
-  COMMA        = :COMMA        # ,
-  COLON        = :COLON        # :
-  DOUBLE_COLON = :DOUBLE_COLON # :: path separator in imports
-  DOT          = :DOT          # .
-  ARROW        = :ARROW        # ->
-  FAT_ARROW    = :FAT_ARROW    # =>
+  LPAREN      = :LPAREN      # (
+  RPAREN      = :RPAREN      # )
+  LBRACKET    = :LBRACKET    # [
+  RBRACKET    = :RBRACKET    # ]
+  LBRACE      = :LBRACE      # {
+  RBRACE      = :RBRACE      # }
+  COMMA       = :COMMA       # ,
+  COLON       = :COLON       # :
+  COLON_COLON = :COLON_COLON # :: path separator in imports
+  DOT         = :DOT         # .
+  ARROW       = :ARROW       # ->
+  FAT_ARROW   = :FAT_ARROW   # =>
 
   # --- Range operators ----------------------------------------
   DOT_DOT       = :DOT_DOT       # ..   exclusive range
