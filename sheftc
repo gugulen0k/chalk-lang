@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -e
+
+usage() {
+  echo "Usage: sheftc <source.sf> [-o output]"
+  echo "       sheftc run <source.sf>"
+  exit 1
+}
+
+COMPILER_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ $# -lt 1 ]]; then usage; fi
+
+RUN_MODE=false
+if [[ "$1" == "run" ]]; then
+  RUN_MODE=true
+  shift
+fi
+
+SOURCE="$1"
+if [[ -z "$SOURCE" ]]; then usage; fi
+if [[ ! -f "$SOURCE" ]]; then
+  echo "Error: file not found: $SOURCE"
+  exit 1
+fi
+
+# Output binary name
+if [[ "$2" == "-o" && -n "$3" ]]; then
+  OUTPUT="$3"
+else
+  OUTPUT="${SOURCE%.sf}"
+fi
+
+LL_FILE="${SOURCE%.sf}.ll"
+
+# Step 1: compile .sf → .ll
+ruby "$COMPILER_DIR/main.rb" "$SOURCE"
+
+# Step 2: compile .ll → binary
+clang -o "$OUTPUT" "$LL_FILE" 2>/dev/null || clang -o "$OUTPUT" "$LL_FILE"
+
+if $RUN_MODE; then
+  exec "$OUTPUT"
+fi
+
+echo "Built: $OUTPUT"

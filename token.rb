@@ -10,4 +10,8 @@ class Token
     @type    = type
     @line    = line
   end
+
+  def to_s
+    @type
+  end
 end

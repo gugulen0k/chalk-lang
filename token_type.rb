@@ -7,7 +7,6 @@ module TokenType
   STRING_LIT = :STRING_LIT # 'hello'  (all string forms collapse to this)
   TRUE       = :TRUE
   FALSE      = :FALSE
-  NIL        = :NIL
 
   # --- Identifier ---------------------------------------------
   IDENT = :IDENT # variable names, function names, type names
@@ -90,6 +89,7 @@ module TokenType
   QUESTION = :QUESTION # ? (bool function suffix / nullable type)
 
   # --- Special ------------------------------------------------
-  NEWLINE = :NEWLINE
-  EOF     = :EOF
+  DOC_COMMENT = :DOC_COMMENT
+  NEWLINE     = :NEWLINE
+  EOF         = :EOF
 end
