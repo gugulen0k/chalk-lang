@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
-# rubocop:disable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize
+# rubocop:disable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity, Naming/MethodParameterName
 
-require_relative './ast'
+require_relative 'ast'
+require_relative 'lexer'
+require_relative 'parser'
 
+# :nodoc:
 class Codegen
-  INTERP_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/.freeze
+  INTERP_REGEX = /\{([^}]+)\}/.freeze
 
   ARITH_INT   = { '+' => 'add',  '-' => 'sub',  '*' => 'mul',  '/' => 'sdiv', '%' => 'srem' }.freeze
   ARITH_FLOAT = { '+' => 'fadd', '-' => 'fsub', '*' => 'fmul', '/' => 'fdiv' }.freeze
@@ -19,10 +22,10 @@ class Codegen
     @functions  = []
     @str_count  = 0
     @func_table = {
-      'println'  => { params: [:string], return_type: :void },
-      'print'    => { params: [:string], return_type: :void },
-      'readline' => { params: [],        return_type: :string },
-      'exit'     => { params: [:int],    return_type: :void }
+      'println' => { params: [:string], return_type: :void },
+      'print' => { params: [:string], return_type: :void },
+      'readline' => { params: [], return_type: :string },
+      'exit' => { params: [:int], return_type: :void }
     }
     reset_func_state
   end
@@ -34,9 +37,9 @@ class Codegen
     toplevel = []
     program.stmts.each do |s|
       case s
-      when AST::FuncDecl                                          then emit_func(s)
+      when AST::FuncDecl then emit_func(s)
       when AST::StructDecl, AST::EnumDecl, AST::ErrorDecl,
-           AST::ImportDecl                                        then nil
+           AST::ImportDecl then nil
       else toplevel << s
       end
     end
@@ -59,7 +62,9 @@ class Codegen
   end
 
   def new_reg
-    r = "%t#{@reg}"; @reg += 1; r
+    r = "%t#{@reg}"
+    @reg += 1
+    r
   end
 
   def alloca_ptr(name)
@@ -69,7 +74,9 @@ class Codegen
   end
 
   def new_label(pfx = 'bb')
-    l = "#{pfx}#{@label_num}"; @label_num += 1; l
+    l = "#{pfx}#{@label_num}"
+    @label_num += 1
+    l
   end
 
   def emit(line)
@@ -82,6 +89,7 @@ class Codegen
       s = line.strip
       next if s.empty?
       return false if s.end_with?(':')
+
       return s.start_with?('ret ') || s.start_with?('br ') || s == 'unreachable'
     end
     false
@@ -96,7 +104,7 @@ class Codegen
     when :bool   then 'i1'
     when :string then 'i8*'
     when :void   then 'void'
-    else 'i8*'
+    else 'i8*' # rubocop:disable Lint/DuplicateBranch
     end
   end
 
@@ -108,9 +116,14 @@ class Codegen
     when AST::StringLit then :string
     when AST::Ident     then @locals[node.name]&.dig(:type) || :unknown
     when AST::BinaryOp
-      l = infer_type(node.left); r = infer_type(node.right)
-      %w[== != < <= > >=].include?(node.op) ? :bool : (l == :float || r == :float ? :float : l)
-    when AST::UnaryOp   then node.op == 'not' ? :bool : infer_type(node.operand)
+      l = infer_type(node.left)
+      r = infer_type(node.right)
+      if %w[== != < <= > >=].include?(node.op)
+        :bool
+      else
+        (l == :float || r == :float ? :float : l)
+      end
+    when AST::UnaryOp then node.op == 'not' ? :bool : infer_type(node.operand)
     else :unknown
     end
   end
@@ -125,7 +138,7 @@ class Codegen
   end
 
   def alloc_str(content)
-    escaped = content.each_char.map { |c|
+    escaped = content.each_char.map do |c|
       case c
       when "\n" then '\0A'
       when "\t" then '\09'
@@ -133,9 +146,10 @@ class Codegen
       when '\\' then '\5C'
       else c
       end
-    }.join
-    name = "str#{@str_count}"; @str_count += 1
-    len  = content.length + 1
+    end.join
+    name = "str#{@str_count}"
+    @str_count += 1
+    len = content.length + 1
     @globals << "@#{name} = private unnamed_addr constant [#{len} x i8] c\"#{escaped}\\00\""
     { name: name, len: len }
   end
@@ -150,7 +164,7 @@ class Codegen
 
   def register_func(node)
     @func_table[node.name] = {
-      params:      node.params.map(&:type),
+      params: node.params.map(&:type),
       return_type: node.return_type
     }
   end
@@ -210,7 +224,6 @@ class Codegen
     when AST::Skip                    then emit_skip(node)
     when AST::Raise                   then emit_raise(node)
     when AST::FuncDecl                then emit_func(node)
-    else nil
     end
   end
 
@@ -241,7 +254,7 @@ class Codegen
   end
 
   def emit_if(node)
-    cond_ref, _ = emit_expr(node.condition)
+    cond_ref, = emit_expr(node.condition)
     then_lbl    = new_label('then')
     merge_lbl   = new_label('merge')
     else_lbl    = node.else_body ? new_label('else') : merge_lbl
@@ -267,7 +280,7 @@ class Codegen
 
     emit "br label %#{cond_lbl}"
     emit "#{cond_lbl}:"
-    cond_ref, _ = emit_expr(node.condition)
+    cond_ref, = emit_expr(node.condition)
     emit "br i1 #{cond_ref}, label %#{body_lbl}, label %#{end_lbl}"
     emit "#{body_lbl}:"
 
@@ -280,12 +293,14 @@ class Codegen
 
   def emit_for(node)
     unless node.iterable.is_a?(AST::Range)
-      emit '; TODO: array for-in'; return
+      emit '
+ TODO: array for-in'
+      return
     end
 
-    range          = node.iterable
-    from_ref, _    = emit_expr(range.from)
-    to_ref, _      = emit_expr(range.to)
+    range = node.iterable
+    from_ref, = emit_expr(range.from)
+    to_ref, = emit_expr(range.to)
     ptr = alloca_ptr(node.var)
     emit "#{ptr} = alloca i64"
     emit "store i64 #{from_ref}, i64* #{ptr}"
@@ -312,7 +327,8 @@ class Codegen
 
     emit "br label %#{inc_lbl}" unless terminates?
     emit "#{inc_lbl}:"
-    cur2 = new_reg; inc = new_reg
+    cur2 = new_reg
+    inc = new_reg
     emit "#{cur2} = load i64, i64* #{ptr}"
     emit "#{inc} = add i64 #{cur2}, 1"
     emit "store i64 #{inc}, i64* #{ptr}"
@@ -325,7 +341,7 @@ class Codegen
     return emit('; break outside loop') unless lp
 
     if node.condition
-      ref, _ = emit_expr(node.condition)
+      ref, = emit_expr(node.condition)
       after  = new_label('ab')
       emit "br i1 #{ref}, label %#{lp[:end]}, label %#{after}"
       emit "#{after}:"
@@ -340,7 +356,7 @@ class Codegen
     return emit('; skip outside loop') unless lp
 
     if node.condition
-      ref, _ = emit_expr(node.condition)
+      ref, = emit_expr(node.condition)
       after  = new_label('as')
       emit "br i1 #{ref}, label %#{lp[:cond]}, label %#{after}"
       emit "#{after}:"
@@ -356,7 +372,7 @@ class Codegen
     cont_lbl = new_label('rc')
 
     if node.condition
-      cref, _ = emit_expr(node.condition)
+      cref, = emit_expr(node.condition)
       emit "br i1 #{cref}, label %#{err_lbl}, label %#{cont_lbl}"
     else
       emit "br label %#{err_lbl}"
@@ -389,12 +405,12 @@ class Codegen
     when AST::Range       then ['undef', :range_int]
     when AST::PathExpr    then ['0', :int]
     when AST::FieldAccess then ['0', :unknown]
-    else ['0', :int]
+    else ['0', :int] # rubocop:disable Lint/DuplicateBranch
     end
   end
 
-  def llvm_float(v)
-    '%.17e' % v
+  def llvm_float(val)
+    format('%.17e', val)
   end
 
   def emit_load(name)
@@ -420,10 +436,14 @@ class Codegen
 
     if use_float
       if ltype == :int
-        t = new_reg; emit "#{t} = sitofp i64 #{lref} to double"; lref = t
+        t = new_reg
+        emit "#{t} = sitofp i64 #{lref} to double"
+        lref = t
       end
       if rtype == :int
-        t = new_reg; emit "#{t} = sitofp i64 #{rref} to double"; rref = t
+        t = new_reg
+        emit "#{t} = sitofp i64 #{rref} to double"
+        rref = t
       end
     end
 
@@ -440,9 +460,11 @@ class Codegen
       emit "#{reg} = #{instr} #{op_lt} #{lref}, #{rref}"
       [reg, :bool]
     when 'and'
-      emit "#{reg} = and i1 #{lref}, #{rref}"; [reg, :bool]
+      emit "#{reg} = and i1 #{lref}, #{rref}"
+      [reg, :bool]
     when 'or'
-      emit "#{reg} = or i1 #{lref}, #{rref}";  [reg, :bool]
+      emit "#{reg} = or i1 #{lref}, #{rref}"
+      [reg, :bool]
     else
       ['0', :int]
     end
@@ -456,7 +478,8 @@ class Codegen
       type == :float ? emit("#{reg} = fneg double #{ref}") : emit("#{reg} = sub i64 0, #{ref}")
       [reg, type]
     when 'not'
-      emit "#{reg} = xor i1 #{ref}, 1"; [reg, :bool]
+      emit "#{reg} = xor i1 #{ref}, 1"
+      [reg, :bool]
     else
       [ref, type]
     end
@@ -466,8 +489,10 @@ class Codegen
     base = node.callee.name.delete_suffix('!').delete_suffix('?')
 
     case base
-    when 'println' then emit_print(node.args.first, newline: true);  ['', :void]
-    when 'print'   then emit_print(node.args.first, newline: false); ['', :void]
+    when 'println' then emit_print(node.args.first, newline: true)
+                        ['', :void]
+    when 'print'   then emit_print(node.args.first, newline: false)
+                        ['', :void]
     else
       arg_vals  = node.args.map { |a| emit_expr(a) }
       args_str  = arg_vals.map { |r, t| "#{lt(t)} #{r}" }.join(', ')
@@ -497,18 +522,19 @@ class Codegen
       else
         fmt      = content.dup
         arg_refs = []
-        interp.each do |var|
-          var_type = @locals[var]&.dig(:type) || :string
-          spec = case var_type
+        interp.each do |expr_str|
+          expr_node      = parse_interp_expr(expr_str)
+          vref, vtype    = emit_expr(expr_node)
+          spec = case vtype
                  when :int   then '%lld'
                  when :float then '%g'
                  when :bool  then '%d'
                  else '%s'
                  end
-          fmt.sub!("{#{var}}", spec)
-          vref, vtype = emit_load(var)
+          fmt.sub!("{#{expr_str}}", spec)
           if vtype == :bool
-            ext = new_reg; emit "#{ext} = zext i1 #{vref} to i32"
+            ext = new_reg
+            emit "#{ext} = zext i1 #{vref} to i32"
             arg_refs << "i32 #{ext}"
           else
             arg_refs << "#{lt(vtype)} #{vref}"
@@ -525,10 +551,11 @@ class Codegen
                        when :int   then [newline ? "%lld\n" : '%lld', "i64 #{ref}"]
                        when :float then [newline ? "%g\n"   : '%g',   "double #{ref}"]
                        when :bool
-                         ext = new_reg; emit "#{ext} = zext i1 #{ref} to i32"
+                         ext = new_reg
+                         emit "#{ext} = zext i1 #{ref} to i32"
                          [newline ? "%d\n" : '%d', "i32 #{ext}"]
                        else
-                         ptr = str_ptr(alloc_str(''))
+                         str_ptr(alloc_str(''))
                          newline ? emit("call i32 @puts(i8* #{ref})") : emit("call i32 @printf(i8* #{ref})")
                          return
                        end
@@ -537,18 +564,24 @@ class Codegen
     end
   end
 
+  def parse_interp_expr(expr_str)
+    lexer = Lexer.new(expr_str)
+    lexer.scan_tokens
+    Parser.new(lexer.tokens).send(:parse_expr)
+  end
+
   def emit_method_call(node)
     emit "; TODO method .#{node.method_name}"
     ['0', :int]
   end
 
-  def emit_index_access(node)
+  def emit_index_access(_node)
     emit '; TODO index access'
     '0'
   end
 
   def emit_ternary(node)
-    cond_ref, _ = emit_expr(node.condition)
+    cond_ref, = emit_expr(node.condition)
     res_type    = infer_type(node.then_expr)
     ptr         = "#{new_reg}.tern"
     then_lbl    = new_label('tt')
@@ -559,12 +592,12 @@ class Codegen
     emit "br i1 #{cond_ref}, label %#{then_lbl}, label %#{else_lbl}"
 
     emit "#{then_lbl}:"
-    tr, _ = emit_expr(node.then_expr)
+    tr, = emit_expr(node.then_expr)
     emit "store #{lt(res_type)} #{tr}, #{lt(res_type)}* #{ptr}"
     emit "br label %#{merge_lbl}"
 
     emit "#{else_lbl}:"
-    er, _ = emit_expr(node.else_expr)
+    er, = emit_expr(node.else_expr)
     emit "store #{lt(res_type)} #{er}, #{lt(res_type)}* #{ptr}"
     emit "br label %#{merge_lbl}"
 
@@ -620,17 +653,16 @@ class Codegen
   def arm_condition(arm, subj_ref, subj_type)
     base = case arm.pattern
            when AST::LiteralPattern
-             pr, _ = emit_expr(arm.pattern.value)
+             pr, = emit_expr(arm.pattern.value)
              cmp   = new_reg
              op    = subj_type == :float ? 'fcmp oeq' : 'icmp eq'
              emit "#{cmp} = #{op} #{lt(subj_type)} #{subj_ref}, #{pr}"
              cmp
-           else nil
            end
 
     return base unless arm.guard
 
-    gr, _ = emit_expr(arm.guard)
+    gr, = emit_expr(arm.guard)
     return gr unless base
 
     combined = new_reg
@@ -645,4 +677,4 @@ class Codegen
   end
 end
 
-# rubocop:enable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize
+# rubocop:enable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity, Naming/MethodParameterName

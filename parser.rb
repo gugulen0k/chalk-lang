@@ -2,11 +2,18 @@
 
 # rubocop:disable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity, Metrics/BlockLength
 
-require_relative './ast'
-require_relative './token_type'
+require_relative 'ast'
+require_relative 'token_type'
+require_relative 'errors'
 
 # :nodoc:
 class Parser
+  COMPARISON_OPS = [
+    TokenType::EQUAL_EQUAL, TokenType::BANG_EQUAL,
+    TokenType::LESS, TokenType::LESS_EQUAL,
+    TokenType::GREATER, TokenType::GREATER_EQUAL
+  ].freeze
+
   def initialize(tokens)
     @tokens = tokens
     @pos    = 0
@@ -35,7 +42,7 @@ class Parser
     tok
   end
 
-  def check(type)
+  def check(type) # rubocop:disable Naming/PredicateMethod
     current&.type == type
   end
 
@@ -53,8 +60,8 @@ class Parser
     current&.type == TokenType::EOF
   end
 
-  def parse_error(msg)
-    raise "Parse error: #{msg}"
+  def parse_error(msg, line: current&.line, hint: nil)
+    raise ParseError.new(msg, line: line, hint: hint)
   end
 
   def expect_newline_or_eof
@@ -117,11 +124,11 @@ class Parser
     if check(TokenType::IDENT) && peek_type(1) == TokenType::COLON
       parse_var_decl(mutable)
     elsif !mutable && check(TokenType::IDENT) && peek_type(1) == TokenType::EQUAL
-      name = advance.lexeme
+      ident_tok = advance
       advance # =
       value = parse_expr
       expect_newline_or_eof
-      AST::Assign.new(AST::Ident.new(name), value)
+      AST::Assign.new(AST::Ident.new(ident_tok.lexeme, ident_tok.line), value)
     else
       expr = parse_expr
       expect_newline_or_eof
@@ -130,13 +137,13 @@ class Parser
   end
 
   def parse_var_decl(mutable)
-    name = expect(TokenType::IDENT).lexeme
+    name_tok = expect(TokenType::IDENT)
     expect(TokenType::COLON)
     type = parse_type
     expect(TokenType::EQUAL)
     value = parse_expr
     expect_newline_or_eof
-    AST::VarDecl.new(mutable, name, type, value)
+    AST::VarDecl.new(mutable, name_tok.lexeme, type, value, name_tok.line)
   end
 
   def parse_type
@@ -163,10 +170,11 @@ class Parser
   end
 
   def parse_func_decl(pub: false)
+    func_line = current.line
     expect(TokenType::FUNC)
-    name      = scan_name
-    failable  = name.end_with?('!')
-    bool_fn   = name.end_with?('?')
+    name        = scan_name
+    failable    = name.end_with?('!')
+    bool_fn     = name.end_with?('?')
     expect(TokenType::LPAREN)
     params = parse_params
     expect(TokenType::RPAREN)
@@ -176,7 +184,7 @@ class Parser
     body = parse_block
     expect(TokenType::END_KW)
     expect_newline_or_eof
-    AST::FuncDecl.new(pub, name, failable, bool_fn, params, return_type, body)
+    AST::FuncDecl.new(pub, name, failable, bool_fn, params, return_type, body, func_line)
   end
 
   def parse_params
@@ -206,10 +214,11 @@ class Parser
   end
 
   def parse_return
+    line = current.line
     expect(TokenType::RETURN)
     value = check(TokenType::NEWLINE) || at_end? ? nil : parse_expr
     expect_newline_or_eof
-    AST::Return.new(value)
+    AST::Return.new(value, line)
   end
 
   def parse_if
@@ -538,12 +547,6 @@ class Parser
     parse_comparison
   end
 
-  COMPARISON_OPS = [
-    TokenType::EQUAL_EQUAL, TokenType::BANG_EQUAL,
-    TokenType::LESS, TokenType::LESS_EQUAL,
-    TokenType::GREATER, TokenType::GREATER_EQUAL
-  ].freeze
-
   def parse_comparison
     left = parse_addition
     while COMPARISON_OPS.include?(current&.type)
@@ -671,7 +674,9 @@ class Parser
         AST::ArrayLit.new(elems)
       end
     when TokenType::IDENT
-      name = advance.lexeme
+      ident_tok = advance
+      name      = ident_tok.lexeme
+      line      = ident_tok.line
       if check(TokenType::BANG)
         advance
         name += '!'
@@ -683,7 +688,7 @@ class Parser
         advance
         args = parse_args
         expect(TokenType::RPAREN)
-        AST::Call.new(AST::Ident.new(name), args)
+        AST::Call.new(AST::Ident.new(name, line), args, line)
       elsif check(TokenType::LBRACE)
         advance
         fields = []
@@ -697,7 +702,7 @@ class Parser
         expect(TokenType::RBRACE)
         AST::StructLit.new(name, fields)
       else
-        AST::Ident.new(name)
+        AST::Ident.new(name, line)
       end
     when TokenType::MATCH
       parse_match_expr

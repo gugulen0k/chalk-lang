@@ -1,0 +1,18 @@
+func is_even(n: int) -> bool
+  return n % 2 == 0
+end
+
+func in_range(n: int, lo: int, hi: int) -> bool
+  return n >= lo and n <= hi
+end
+
+println(is_even(4))
+println(is_even(7))
+println(in_range(5, 1, 10))
+println(in_range(15, 1, 10))
+
+a: bool = true
+b: bool = false
+println(a and b)
+println(a or b)
+println(not a)

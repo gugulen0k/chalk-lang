@@ -1,0 +1,14 @@
+func add(a: int, b: int) -> int
+  return a + b
+end
+
+func multiply(a: int, b: int) -> int
+  return a * b
+end
+
+x: int = 10
+y: int = 5
+println(f'{x} + {y} = {add(x, y)}')
+println(f'{x} * {y} = {multiply(x, y)}')
+println(f'nested: {multiply(add(x, y), 2)}')
+println(f'expr: {x + y}')

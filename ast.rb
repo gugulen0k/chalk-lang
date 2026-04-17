@@ -4,8 +4,8 @@ module AST
   Program = Struct.new(:stmts)
 
   # Declarations
-  VarDecl     = Struct.new(:mutable, :name, :type, :value)
-  FuncDecl    = Struct.new(:pub, :name, :failable, :bool_fn, :params, :return_type, :body)
+  VarDecl     = Struct.new(:mutable, :name, :type, :value, :line)
+  FuncDecl    = Struct.new(:pub, :name, :failable, :bool_fn, :params, :return_type, :body, :line)
   Param       = Struct.new(:name, :type)
   ConstDecl   = Struct.new(:name, :type, :value)
   ImportDecl  = Struct.new(:path, :import_alias, :items)
@@ -16,7 +16,7 @@ module AST
   ErrorDecl   = Struct.new(:pub, :name, :variants)
 
   # Statements
-  Return   = Struct.new(:value)
+  Return   = Struct.new(:value, :line)
   If       = Struct.new(:condition, :then_body, :else_body)
   While    = Struct.new(:condition, :body)
   ForIn    = Struct.new(:var, :index_var, :iterable, :body)
@@ -39,10 +39,10 @@ module AST
   FloatLit     = Struct.new(:value)
   StringLit    = Struct.new(:value)
   BoolLit      = Struct.new(:value)
-  Ident        = Struct.new(:name)
+  Ident        = Struct.new(:name, :line)
   BinaryOp     = Struct.new(:op, :left, :right)
   UnaryOp      = Struct.new(:op, :operand)
-  Call         = Struct.new(:callee, :args)
+  Call         = Struct.new(:callee, :args, :line)
   MethodCall   = Struct.new(:receiver, :method_name, :args)
   FieldAccess  = Struct.new(:receiver, :field)
   IndexAccess  = Struct.new(:receiver, :index)

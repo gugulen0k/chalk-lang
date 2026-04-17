@@ -2,9 +2,8 @@
 
 # rubocop:disable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity
 
-require_relative './ast'
-
-class TypeError < StandardError; end
+require_relative 'ast'
+require_relative 'errors'
 
 # Resolved types used throughout the checker.
 # Primitive symbols: :int, :float, :string, :bool, :void
@@ -20,6 +19,10 @@ class TypeChecker
     'readline' => [:func, [], :string, false],
     'exit' => [:func, [:int], :void, false]
   }.freeze
+
+  ARITHMETIC_OPS = %w[+ - * / %].freeze
+  COMPARISON_OPS = %w[== != < <= > >=].freeze
+  LOGICAL_OPS    = %w[and or].freeze
 
   def initialize
     @scopes       = [{}]
@@ -56,8 +59,29 @@ class TypeChecker
     nil
   end
 
-  def error(msg)
-    raise TypeError, msg
+  def error(msg, line: nil, hint: nil)
+    raise TypeCheckError.new(msg, line: line, hint: hint)
+  end
+
+  def closest_match(target, candidates)
+    best = candidates.min_by { |c| levenshtein(target.downcase, c.downcase) }
+    dist = levenshtein(target.downcase, best.downcase)
+    dist <= [target.length / 2, 3].max ? best : nil
+  end
+
+  def levenshtein(str_a, str_b)
+    return str_b.length if str_a.empty?
+    return str_a.length if str_b.empty?
+
+    prev = (0..str_b.length).to_a
+    str_a.each_char.with_index(1) do |ca, i|
+      curr = [i]
+      str_b.each_char.with_index(1) do |cb, j|
+        curr << [prev[j] + 1, curr.last + 1, prev[j - 1] + (ca == cb ? 0 : 1)].min
+      end
+      prev = curr
+    end
+    prev.last
   end
 
   # ---- First-pass hoisting ----
@@ -68,8 +92,8 @@ class TypeChecker
       param_types = node.params.map { |p| resolve_type(p.type) }
       @funcs[node.name] = [:func, param_types, resolve_type(node.return_type), node.failable]
     when AST::StructDecl
-      @structs[node.name] = node.fields.each_with_object({}) do |f, h|
-        h[f.name] = resolve_type(f.type)
+      @structs[node.name] = node.fields.to_h do |f|
+        [f.name, resolve_type(f.type)]
       end
     when AST::EnumDecl
       @enums[node.name] = node.variants.map(&:name)
@@ -82,12 +106,12 @@ class TypeChecker
 
   # ---- Resolve AST type annotation to canonical type ----
 
-  def resolve_type(ann)
-    return ann if ann.is_a?(Symbol) # :int, :float, etc.
-    return ann if ann.is_a?(Array)  # [:array, inner]
+  def resolve_type(annotation)
+    return annotation if annotation.is_a?(Symbol) # :int, :float, etc.
+    return annotation if annotation.is_a?(Array)  # [:array, inner]
 
     # String = user-defined type name
-    ann
+    annotation
   end
 
   # ---- Statement checking ----
@@ -116,16 +140,20 @@ class TypeChecker
   def check_var_decl(node)
     declared = resolve_type(node.type)
     actual   = check_expr(node.value)
-    unify!(declared, actual, "variable '#{node.name}'")
+    unify!(declared, actual, "variable '#{node.name}'", line: node.line)
     define(node.name, declared)
   end
 
   def check_assign(node)
     target_type = lookup(node.target.name)
-    error("Undefined variable '#{node.target.name}'") unless target_type
-
+    unless target_type
+      hint = closest_match(node.target.name, all_names)
+      error("Undefined variable '#{node.target.name}'",
+            line: node.target.line,
+            hint: hint ? "did you mean '#{hint}'?" : "declare it first with '#{node.target.name}: <type> = <value>'")
+    end
     actual = check_expr(node.value)
-    unify!(target_type, actual, "assignment to '#{node.target.name}'")
+    unify!(target_type, actual, "assignment to '#{node.target.name}'", line: node.target.line)
   end
 
   def check_func_decl(node)
@@ -136,17 +164,38 @@ class TypeChecker
     node.body.each   { |s| check_stmt(s) }
     pop_scope
     @current_func = prev_func
+
+    ret = resolve_type(node.return_type)
+    return unless ret != :void && !body_returns?(node.body)
+
+    error("Function '#{node.name}' declared to return '#{ret}' but has no return statement",
+          line: node.line,
+          hint: "add 'return <value>' before 'end', or change the return type to 'void'")
+  end
+
+  def body_returns?(stmts)
+    stmts.any? do |s|
+      case s
+      when AST::Return then true
+      when AST::If     then body_returns?(s.then_body) && s.else_body && body_returns?(s.else_body)
+      when AST::While  then body_returns?(s.body)
+      else false
+      end
+    end
   end
 
   def check_return(node)
-    error("'return' outside function") unless @current_func
+    unless @current_func
+      error("'return' outside function", line: node.line,
+                                         hint: "move this 'return' inside a function body")
+    end
 
-    expected = @current_func[2] # return_type
+    expected = @current_func[2]
     if node.value.nil?
-      unify!(expected, :void, "'return'")
+      unify!(expected, :void, "'return'", line: node.line)
     else
       actual = check_expr(node.value)
-      unify!(expected, actual, "'return'")
+      unify!(expected, actual, "'return'", line: node.line)
     end
   end
 
@@ -236,14 +285,14 @@ class TypeChecker
 
   def check_ident(node)
     type = lookup(node.name)
-    error("Undefined variable '#{node.name}'") unless type
-
+    unless type
+      hint = closest_match(node.name, all_names)
+      error("Undefined variable '#{node.name}'",
+            line: node.line,
+            hint: hint ? "did you mean '#{hint}'?" : nil)
+    end
     type
   end
-
-  ARITHMETIC_OPS = %w[+ - * / %].freeze
-  COMPARISON_OPS = %w[== != < <= > >=].freeze
-  LOGICAL_OPS    = %w[and or].freeze
 
   def check_binary(node)
     left  = check_expr(node.left)
@@ -284,17 +333,21 @@ class TypeChecker
   def check_call(node)
     name = node.callee.name
     func = @funcs[name]
-    error("Undefined function '#{name}'") unless func
+    unless func
+      hint = closest_match(name, @funcs.keys)
+      error("Undefined function '#{name}'",
+            line: node.line,
+            hint: hint ? "did you mean '#{hint}'?" : "define it with 'func #{name}(...) -> <type>'")
+    end
 
-    # println/print accept any single printable value
     if %w[println print].include?(name)
-      error("'#{name}' takes exactly 1 argument") unless node.args.size == 1
+      error("'#{name}' takes exactly 1 argument", line: node.line) unless node.args.size == 1
       check_expr(node.args.first)
       return :void
     end
 
     _, param_types, return_type, _failable = func
-    check_call_args(name, param_types, node.args)
+    check_call_args(name, param_types, node.args, line: node.line)
     return_type
   end
 
@@ -315,15 +368,12 @@ class TypeChecker
       end
     when :string
       case node.method_name
-      when 'len' then :int
-      when 'upper', 'lower', 'trim', 'replace', 'repeat' then :string
+      when 'upper', 'lower', 'trim', 'replace', 'repeat', 'to_string' then :string
       when 'split' then %i[array string]
       when 'empty?', 'starts_with?', 'ends_with?',
            'contains?', 'alpha?', 'digit?' then :bool
-      when 'to_int!'                                      then :int
-      when 'to_float!'                                    then :float
-      when 'to_string'                                    then :string
-      when 'index_of!'                                    then :int
+      when 'len', 'to_int!', 'index_of!' then :int
+      when 'to_float!' then :float
       else error("Unknown string method '#{node.method_name}'")
       end
     else
@@ -446,13 +496,21 @@ class TypeChecker
 
   # ---- Helpers ----
 
-  def check_call_args(name, param_types, args)
-    error("'#{name}' expects #{param_types.size} argument(s), got #{args.size}") \
-      if args.size != param_types.size
+  def check_call_args(name, param_types, args, line: nil)
+    if args.size != param_types.size
+      error("'#{name}' expects #{param_types.size} argument(s), got #{args.size}",
+            line: line,
+            hint: missing_or_extra_args_hint(name, param_types.size, args.size))
+    end
     args.each_with_index do |arg, i|
       actual = check_expr(arg)
-      unify!(param_types[i], actual, "argument #{i + 1} of '#{name}'")
+      unify!(param_types[i], actual, "argument #{i + 1} of '#{name}'", line: line)
     end
+  end
+
+  def missing_or_extra_args_hint(_name, expected, got)
+    diff = (expected - got).abs
+    got < expected ? "missing #{diff} argument(s)" : "remove #{diff} argument(s)"
   end
 
   def numeric?(type)
@@ -471,10 +529,34 @@ class TypeChecker
     false
   end
 
-  def unify!(expected, actual, context)
+  def unify!(expected, actual, context, line: nil)
     return if compatible?(expected, actual)
 
-    error("Type mismatch in #{context}: expected #{expected}, got #{actual}")
+    hint = type_mismatch_hint(expected, actual)
+    error("Type mismatch in #{context}: expected '#{expected}', got '#{actual}'",
+          line: line, hint: hint)
+  end
+
+  def type_mismatch_hint(expected, actual)
+    case [expected, actual]
+    in [:int, :float] | [:float, :int]
+      "use an explicit conversion: '.to_int()' or '.to_float()'"
+    in [:string, :int] | [:string, :float] | [:string, :bool]
+      "use '.to_string()' to convert to string"
+    in [:bool, :int]
+      "comparison returns bool, not int — use '== 0' for zero-check"
+    in [:void, _]
+      "this expression returns a value but none was expected — remove the 'return' value"
+    in [_, :void]
+      'function returns void — it cannot be used as a value'
+    else
+      nil
+    end
+  end
+
+  def all_names
+    scope_names = @scopes.flat_map(&:keys)
+    scope_names + @funcs.keys
   end
 end
 

@@ -1,0 +1,3 @@
+func get_value() -> int
+  println('no return here')
+end

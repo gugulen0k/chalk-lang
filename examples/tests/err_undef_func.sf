@@ -1,0 +1,5 @@
+func greet(name: string) -> void
+  println(f'Hello {name}')
+end
+
+greeet('World')

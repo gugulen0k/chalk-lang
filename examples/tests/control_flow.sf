@@ -1,0 +1,22 @@
+mut total: int = 0
+for i in 1..=10
+  total = total + i
+end
+println(f'sum 1..10 = {total}')
+
+mut x: int = 1
+while x < 32
+  x = x * 2
+end
+println(f'first power of 2 >= 32 is {x}')
+
+score: int = 75
+if score >= 90
+  println('A')
+else
+  if score >= 75
+    println('B')
+  else
+    println('C')
+  end
+end

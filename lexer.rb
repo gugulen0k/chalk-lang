@@ -2,8 +2,8 @@
 
 # rubocop:disable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity
 
-require_relative './token_type'
-require_relative './token'
+require_relative 'token_type'
+require_relative 'token'
 
 # :nodoc:
 class Lexer
@@ -20,9 +20,9 @@ class Lexer
     '{' => -> { add_token(type: TokenType::LBRACE) },
     '}' => -> { add_token(type: TokenType::RBRACE) },
     ',' => -> { add_token(type: TokenType::COMMA) },
-    ' ' => -> { nil },
-    "\r" => -> { nil },
-    "\t" => -> { nil },
+    ' ' => -> {},
+    "\r" => -> {},
+    "\t" => -> {},
     "\n" => lambda {
       @line += 1
       add_token(type: TokenType::NEWLINE)
