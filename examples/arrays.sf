@@ -1,0 +1,25 @@
+mut nums: [int] = []
+nums.push(10)
+nums.push(20)
+nums.push(30)
+
+println(f'Length: {nums.len()}')
+
+for item in nums
+  println(item)
+end
+
+mut data: [int] = [1, 2, 3, 4, 5]
+println(data[0])
+println(data[4])
+
+data[2] = 99
+println(data[2])
+
+mut reserved: [int] = [reserve 100]
+reserved.push(42)
+println(reserved[0])
+
+popped: int = nums.pop()
+println(f'Popped: {popped}')
+println(f'Length after pop: {nums.len()}')

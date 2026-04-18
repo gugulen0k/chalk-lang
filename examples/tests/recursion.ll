@@ -1,6 +1,14 @@
 declare i32 @puts(i8*)
 declare i32 @printf(i8*, ...)
 declare void @exit(i32)
+declare i8* @malloc(i64)
+declare i8* @realloc(i8*, i64)
+declare void @free(i8*)
+
+%SheftArr_int   = type { i64*, i64, i64 }
+%SheftArr_float = type { double*, i64, i64 }
+%SheftArr_str   = type { i8**, i64, i64 }
+%SheftArr_bool  = type { i1*, i64, i64 }
 
 @str0 = private unnamed_addr constant [11 x i8] c"5! = %lld\0A\00"
 @str1 = private unnamed_addr constant [12 x i8] c"10! = %lld\0A\00"

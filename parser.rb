@@ -131,6 +131,12 @@ class Parser
       AST::Assign.new(AST::Ident.new(ident_tok.lexeme, ident_tok.line), value)
     else
       expr = parse_expr
+      if !mutable && check(TokenType::EQUAL)
+        advance
+        value = parse_expr
+        expect_newline_or_eof
+        return AST::Assign.new(expr, value)
+      end
       expect_newline_or_eof
       AST::ExprStmt.new(expr)
     end

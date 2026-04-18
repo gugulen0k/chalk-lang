@@ -145,15 +145,30 @@ class TypeChecker
   end
 
   def check_assign(node)
-    target_type = lookup(node.target.name)
-    unless target_type
-      hint = closest_match(node.target.name, all_names)
-      error("Undefined variable '#{node.target.name}'",
-            line: node.target.line,
-            hint: hint ? "did you mean '#{hint}'?" : "declare it first with '#{node.target.name}: <type> = <value>'")
+    case node.target
+    when AST::Ident
+      target_type = lookup(node.target.name)
+      unless target_type
+        hint = closest_match(node.target.name, all_names)
+        error("Undefined variable '#{node.target.name}'",
+              line: node.target.line,
+              hint: hint ? "did you mean '#{hint}'?" : "declare it first with '#{node.target.name}: <type> = <value>'")
+      end
+      actual = check_expr(node.value)
+      unify!(target_type, actual, "assignment to '#{node.target.name}'", line: node.target.line)
+    when AST::IndexAccess
+      arr_type = check_expr(node.target.receiver)
+      idx_type = check_expr(node.target.index)
+      error("Array index must be int, got #{idx_type}") unless idx_type == :int
+      if arr_type.is_a?(Array) && arr_type[0] == :array
+        actual = check_expr(node.value)
+        unify!(arr_type[1], actual, 'array element assignment')
+      else
+        error("Cannot index-assign into #{arr_type}")
+      end
+    else
+      error("Invalid assignment target #{node.target.class}")
     end
-    actual = check_expr(node.value)
-    unify!(target_type, actual, "assignment to '#{node.target.name}'", line: node.target.line)
   end
 
   def check_func_decl(node)

@@ -104,8 +104,33 @@ class Codegen
     when :bool   then 'i1'
     when :string then 'i8*'
     when :void   then 'void'
+    when Array   then t[0] == :array ? "%#{arr_struct_name(t[1])}*" : 'i8*'
     else 'i8*' # rubocop:disable Lint/DuplicateBranch
     end
+  end
+
+  def arr_struct_name(elem_type)
+    case elem_type
+    when :int    then 'SheftArr_int'
+    when :float  then 'SheftArr_float'
+    when :string then 'SheftArr_str'
+    when :bool   then 'SheftArr_bool'
+    else 'SheftArr_int'
+    end
+  end
+
+  def elem_llvm_type(elem_type)
+    case elem_type
+    when :int    then 'i64'
+    when :float  then 'double'
+    when :string then 'i8*'
+    when :bool   then 'i1'
+    else 'i64'
+    end
+  end
+
+  def elem_byte_size(elem_type)
+    elem_type == :bool ? 1 : 8
   end
 
   def infer_type(node)
@@ -124,6 +149,19 @@ class Codegen
         (l == :float || r == :float ? :float : l)
       end
     when AST::UnaryOp then node.op == 'not' ? :bool : infer_type(node.operand)
+    when AST::ArrayLit
+      node.elements.empty? ? [:array, :int] : [:array, infer_type(node.elements.first)]
+    when AST::IndexAccess
+      rt = infer_type(node.receiver)
+      rt.is_a?(Array) && rt[0] == :array ? rt[1] : :unknown
+    when AST::MethodCall
+      case node.method_name
+      when 'len' then :int
+      when 'pop'
+        rt = infer_type(node.receiver)
+        rt.is_a?(Array) && rt[0] == :array ? rt[1] : :unknown
+      else :unknown
+      end
     else :unknown
     end
   end
@@ -134,6 +172,14 @@ class Codegen
     @globals << 'declare i32 @puts(i8*)'
     @globals << 'declare i32 @printf(i8*, ...)'
     @globals << 'declare void @exit(i32)'
+    @globals << 'declare i8* @malloc(i64)'
+    @globals << 'declare i8* @realloc(i8*, i64)'
+    @globals << 'declare void @free(i8*)'
+    @globals << ''
+    @globals << '%SheftArr_int   = type { i64*, i64, i64 }'
+    @globals << '%SheftArr_float = type { double*, i64, i64 }'
+    @globals << '%SheftArr_str   = type { i8**, i64, i64 }'
+    @globals << '%SheftArr_bool  = type { i1*, i64, i64 }'
     @globals << ''
   end
 
@@ -228,19 +274,53 @@ class Codegen
   end
 
   def emit_var_decl(node)
-    ref, type = emit_expr(node.value)
-    ptr = alloca_ptr(node.name)
-    emit "#{ptr} = alloca #{lt(type)}"
-    emit "store #{lt(type)} #{ref}, #{lt(type)}* #{ptr}"
-    @locals[node.name] = { ptr: ptr, type: type }
+    decl_type = node.type
+    if decl_type.is_a?(Array) && decl_type[0] == :array
+      elem_type = decl_type[1]
+      arr_ref = case node.value
+                when AST::ArrayLit
+                  elem_refs = node.value.elements.map { |e| emit_expr(e)[0] }
+                  emit_array_from_elements(elem_type, elem_refs)
+                when AST::ArrayReserve
+                  cap_ref, = emit_expr(node.value.capacity)
+                  emit_array_from_reserve(elem_type, cap_ref)
+                else
+                  emit_expr(node.value)[0]
+                end
+      ptr = alloca_ptr(node.name)
+      emit "#{ptr} = alloca #{lt(decl_type)}"
+      emit "store #{lt(decl_type)} #{arr_ref}, #{lt(decl_type)}* #{ptr}"
+      @locals[node.name] = { ptr: ptr, type: decl_type }
+    else
+      ref, type = emit_expr(node.value)
+      ptr = alloca_ptr(node.name)
+      emit "#{ptr} = alloca #{lt(type)}"
+      emit "store #{lt(type)} #{ref}, #{lt(type)}* #{ptr}"
+      @locals[node.name] = { ptr: ptr, type: type }
+    end
   end
 
   def emit_assign(node)
-    local = @locals[node.target.name]
-    return emit("; undefined '#{node.target.name}'") unless local
+    case node.target
+    when AST::Ident
+      local = @locals[node.target.name]
+      return emit("; undefined '#{node.target.name}'") unless local
 
-    ref, type = emit_expr(node.value)
-    emit "store #{lt(type)} #{ref}, #{lt(type)}* #{local[:ptr]}"
+      ref, type = emit_expr(node.value)
+      emit "store #{lt(type)} #{ref}, #{lt(type)}* #{local[:ptr]}"
+    when AST::IndexAccess
+      arr_ref, arr_type = emit_expr(node.target.receiver)
+      if arr_type.is_a?(Array) && arr_type[0] == :array
+        elem_type = arr_type[1]
+        idx_ref, = emit_expr(node.target.index)
+        val_ref, = emit_expr(node.value)
+        emit_array_index_store(arr_ref, elem_type, idx_ref, val_ref)
+      else
+        emit '; TODO non-array index assign'
+      end
+    else
+      emit '; TODO complex assign target'
+    end
   end
 
   def emit_return(node)
@@ -292,12 +372,19 @@ class Codegen
   end
 
   def emit_for(node)
-    unless node.iterable.is_a?(AST::Range)
-      emit '
- TODO: array for-in'
-      return
+    if node.iterable.is_a?(AST::Range)
+      emit_for_range(node)
+    else
+      arr_ref, arr_type = emit_expr(node.iterable)
+      if arr_type.is_a?(Array) && arr_type[0] == :array
+        emit_for_array(node, arr_ref, arr_type[1])
+      else
+        emit '; TODO for-in non-array'
+      end
     end
+  end
 
+  def emit_for_range(node)
     range = node.iterable
     from_ref, = emit_expr(range.from)
     to_ref, = emit_expr(range.to)
@@ -320,7 +407,7 @@ class Codegen
     emit "br i1 #{cmp}, label %#{body_lbl}, label %#{end_lbl}"
     emit "#{body_lbl}:"
 
-    # skip goes to inc_lbl (not cond_lbl) so increment always runs
+    # skip goes to inc_lbl so increment always runs
     @loop_stack.push({ cond: inc_lbl, end: end_lbl })
     node.body.each { |s| emit_stmt(s) }
     @loop_stack.pop
@@ -328,10 +415,59 @@ class Codegen
     emit "br label %#{inc_lbl}" unless terminates?
     emit "#{inc_lbl}:"
     cur2 = new_reg
-    inc = new_reg
+    inc  = new_reg
     emit "#{cur2} = load i64, i64* #{ptr}"
     emit "#{inc} = add i64 #{cur2}, 1"
     emit "store i64 #{inc}, i64* #{ptr}"
+    emit "br label %#{cond_lbl}"
+    emit "#{end_lbl}:"
+  end
+
+  def emit_for_array(node, arr_ref, elem_type)
+    elt     = elem_llvm_type(elem_type)
+    len_ref = emit_array_get_len(arr_ref, elem_type)
+
+    idx_ptr = alloca_ptr('__aidx')
+    emit "#{idx_ptr} = alloca i64"
+    emit "store i64 0, i64* #{idx_ptr}"
+    @locals[node.index_var] = { ptr: idx_ptr, type: :int } if node.index_var
+
+    item_ptr = alloca_ptr(node.var)
+    emit "#{item_ptr} = alloca #{elt}"
+    @locals[node.var] = { ptr: item_ptr, type: elem_type }
+
+    cond_lbl = new_label('fc')
+    body_lbl = new_label('fb')
+    inc_lbl  = new_label('fi')
+    end_lbl  = new_label('fe')
+
+    emit "br label %#{cond_lbl}"
+    emit "#{cond_lbl}:"
+    cur_idx = new_reg
+    emit "#{cur_idx} = load i64, i64* #{idx_ptr}"
+    cmp = new_reg
+    emit "#{cmp} = icmp slt i64 #{cur_idx}, #{len_ref}"
+    emit "br i1 #{cmp}, label %#{body_lbl}, label %#{end_lbl}"
+    emit "#{body_lbl}:"
+
+    data = emit_array_get_data(arr_ref, elem_type)
+    slot = new_reg
+    emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{cur_idx}"
+    item = new_reg
+    emit "#{item} = load #{elt}, #{elt}* #{slot}"
+    emit "store #{elt} #{item}, #{elt}* #{item_ptr}"
+
+    @loop_stack.push({ cond: inc_lbl, end: end_lbl })
+    node.body.each { |s| emit_stmt(s) }
+    @loop_stack.pop
+
+    emit "br label %#{inc_lbl}" unless terminates?
+    emit "#{inc_lbl}:"
+    cur2 = new_reg
+    inc  = new_reg
+    emit "#{cur2} = load i64, i64* #{idx_ptr}"
+    emit "#{inc} = add i64 #{cur2}, 1"
+    emit "store i64 #{inc}, i64* #{idx_ptr}"
     emit "br label %#{cond_lbl}"
     emit "#{end_lbl}:"
   end
@@ -398,7 +534,14 @@ class Codegen
     when AST::UnaryOp     then emit_unary(node)
     when AST::Call        then emit_call(node)
     when AST::MethodCall  then emit_method_call(node)
-    when AST::IndexAccess then [emit_index_access(node), :unknown]
+    when AST::IndexAccess then emit_index_access(node)
+    when AST::ArrayLit
+      elem_type = node.elements.empty? ? :int : infer_type(node.elements.first)
+      elem_refs = node.elements.map { |e| emit_expr(e)[0] }
+      [emit_array_from_elements(elem_type, elem_refs), [:array, elem_type]]
+    when AST::ArrayReserve
+      cap_ref, = emit_expr(node.capacity)
+      [emit_array_from_reserve(:int, cap_ref), [:array, :int]]
     when AST::Ternary     then emit_ternary(node)
     when AST::Match       then emit_match(node)
     when AST::Try, AST::Catch then emit_expr(node.expr)
@@ -571,13 +714,38 @@ class Codegen
   end
 
   def emit_method_call(node)
-    emit "; TODO method .#{node.method_name}"
-    ['0', :int]
+    recv_ref, recv_type = emit_expr(node.receiver)
+    if recv_type.is_a?(Array) && recv_type[0] == :array
+      elem_type = recv_type[1]
+      case node.method_name
+      when 'push'
+        val_ref, = emit_expr(node.args[0])
+        emit_array_push(recv_ref, elem_type, val_ref)
+        ['', :void]
+      when 'pop'
+        [emit_array_pop(recv_ref, elem_type), elem_type]
+      when 'len'
+        [emit_array_get_len(recv_ref, elem_type), :int]
+      else
+        emit "; TODO array method .#{node.method_name}"
+        ['0', :int]
+      end
+    else
+      emit "; TODO method .#{node.method_name}"
+      ['0', :int]
+    end
   end
 
-  def emit_index_access(_node)
-    emit '; TODO index access'
-    '0'
+  def emit_index_access(node)
+    recv_ref, recv_type = emit_expr(node.receiver)
+    idx_ref, = emit_expr(node.index)
+    if recv_type.is_a?(Array) && recv_type[0] == :array
+      elem_type = recv_type[1]
+      [emit_array_read(recv_ref, elem_type, idx_ref), elem_type]
+    else
+      emit '; TODO index access non-array'
+      ['0', :int]
+    end
   end
 
   def emit_ternary(node)
@@ -668,6 +836,188 @@ class Codegen
     combined = new_reg
     emit "#{combined} = and i1 #{base}, #{gr}"
     combined
+  end
+
+  # ---------- Array helpers ----------
+
+  def emit_array_alloc_struct(elem_type)
+    sname = arr_struct_name(elem_type)
+    raw = new_reg
+    emit "#{raw} = call i8* @malloc(i64 24)"
+    arr = new_reg
+    emit "#{arr} = bitcast i8* #{raw} to %#{sname}*"
+    arr
+  end
+
+  def emit_array_get_data(arr, elem_type)
+    sname = arr_struct_name(elem_type)
+    elt   = elem_llvm_type(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 0"
+    r = new_reg
+    emit "#{r} = load #{elt}*, #{elt}** #{f}"
+    r
+  end
+
+  def emit_array_set_data(arr, elem_type, data_ref)
+    sname = arr_struct_name(elem_type)
+    elt   = elem_llvm_type(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 0"
+    emit "store #{elt}* #{data_ref}, #{elt}** #{f}"
+  end
+
+  def emit_array_get_len(arr, elem_type)
+    sname = arr_struct_name(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 1"
+    r = new_reg
+    emit "#{r} = load i64, i64* #{f}"
+    r
+  end
+
+  def emit_array_set_len(arr, elem_type, len_ref)
+    sname = arr_struct_name(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 1"
+    emit "store i64 #{len_ref}, i64* #{f}"
+  end
+
+  def emit_array_get_cap(arr, elem_type)
+    sname = arr_struct_name(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 2"
+    r = new_reg
+    emit "#{r} = load i64, i64* #{f}"
+    r
+  end
+
+  def emit_array_set_cap(arr, elem_type, cap_ref)
+    sname = arr_struct_name(elem_type)
+    f = new_reg
+    emit "#{f} = getelementptr inbounds %#{sname}, %#{sname}* #{arr}, i32 0, i32 2"
+    emit "store i64 #{cap_ref}, i64* #{f}"
+  end
+
+  def emit_array_grow(arr, elem_type)
+    elt  = elem_llvm_type(elem_type)
+    esz  = elem_byte_size(elem_type)
+    cap  = emit_array_get_cap(arr, elem_type)
+    is_z = new_reg
+    emit "#{is_z} = icmp eq i64 #{cap}, 0"
+    dbl  = new_reg
+    emit "#{dbl} = mul i64 #{cap}, 2"
+    new_cap = new_reg
+    emit "#{new_cap} = select i1 #{is_z}, i64 8, i64 #{dbl}"
+    old_data = emit_array_get_data(arr, elem_type)
+    cast_old = new_reg
+    emit "#{cast_old} = bitcast #{elt}* #{old_data} to i8*"
+    bytes = new_reg
+    emit "#{bytes} = mul i64 #{new_cap}, #{esz}"
+    raw_new = new_reg
+    emit "#{raw_new} = call i8* @realloc(i8* #{cast_old}, i64 #{bytes})"
+    new_data = new_reg
+    emit "#{new_data} = bitcast i8* #{raw_new} to #{elt}*"
+    emit_array_set_data(arr, elem_type, new_data)
+    emit_array_set_cap(arr, elem_type, new_cap)
+  end
+
+  def emit_array_push(arr, elem_type, val_ref)
+    elt     = elem_llvm_type(elem_type)
+    len_ref = emit_array_get_len(arr, elem_type)
+    cap_ref = emit_array_get_cap(arr, elem_type)
+    need_grow = new_reg
+    emit "#{need_grow} = icmp eq i64 #{len_ref}, #{cap_ref}"
+    grow_lbl = new_label('ag')
+    push_lbl = new_label('ap')
+    emit "br i1 #{need_grow}, label %#{grow_lbl}, label %#{push_lbl}"
+    emit "#{grow_lbl}:"
+    emit_array_grow(arr, elem_type)
+    emit "br label %#{push_lbl}"
+    emit "#{push_lbl}:"
+    data = emit_array_get_data(arr, elem_type)
+    slot = new_reg
+    emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{len_ref}"
+    emit "store #{elt} #{val_ref}, #{elt}* #{slot}"
+    new_len = new_reg
+    emit "#{new_len} = add i64 #{len_ref}, 1"
+    emit_array_set_len(arr, elem_type, new_len)
+  end
+
+  def emit_array_pop(arr, elem_type)
+    elt     = elem_llvm_type(elem_type)
+    len_ref = emit_array_get_len(arr, elem_type)
+    new_len = new_reg
+    emit "#{new_len} = sub i64 #{len_ref}, 1"
+    emit_array_set_len(arr, elem_type, new_len)
+    data = emit_array_get_data(arr, elem_type)
+    slot = new_reg
+    emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{new_len}"
+    val = new_reg
+    emit "#{val} = load #{elt}, #{elt}* #{slot}"
+    val
+  end
+
+  def emit_array_read(arr, elem_type, idx_ref)
+    elt  = elem_llvm_type(elem_type)
+    data = emit_array_get_data(arr, elem_type)
+    slot = new_reg
+    emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{idx_ref}"
+    val = new_reg
+    emit "#{val} = load #{elt}, #{elt}* #{slot}"
+    val
+  end
+
+  def emit_array_index_store(arr, elem_type, idx_ref, val_ref)
+    elt  = elem_llvm_type(elem_type)
+    data = emit_array_get_data(arr, elem_type)
+    slot = new_reg
+    emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{idx_ref}"
+    emit "store #{elt} #{val_ref}, #{elt}* #{slot}"
+  end
+
+  def emit_array_from_elements(elem_type, elem_refs)
+    elt   = elem_llvm_type(elem_type)
+    esz   = elem_byte_size(elem_type)
+    count = elem_refs.size
+    arr   = emit_array_alloc_struct(elem_type)
+    if count > 0
+      bytes    = new_reg
+      emit "#{bytes} = mul i64 #{count}, #{esz}"
+      data_raw = new_reg
+      emit "#{data_raw} = call i8* @malloc(i64 #{bytes})"
+      data = new_reg
+      emit "#{data} = bitcast i8* #{data_raw} to #{elt}*"
+      elem_refs.each_with_index do |eref, i|
+        slot = new_reg
+        emit "#{slot} = getelementptr inbounds #{elt}, #{elt}* #{data}, i64 #{i}"
+        emit "store #{elt} #{eref}, #{elt}* #{slot}"
+      end
+      emit_array_set_data(arr, elem_type, data)
+      emit_array_set_len(arr, elem_type, count.to_s)
+      emit_array_set_cap(arr, elem_type, count.to_s)
+    else
+      emit_array_set_data(arr, elem_type, 'null')
+      emit_array_set_len(arr, elem_type, '0')
+      emit_array_set_cap(arr, elem_type, '0')
+    end
+    arr
+  end
+
+  def emit_array_from_reserve(elem_type, cap_ref)
+    elt      = elem_llvm_type(elem_type)
+    esz      = elem_byte_size(elem_type)
+    arr      = emit_array_alloc_struct(elem_type)
+    bytes    = new_reg
+    emit "#{bytes} = mul i64 #{cap_ref}, #{esz}"
+    data_raw = new_reg
+    emit "#{data_raw} = call i8* @malloc(i64 #{bytes})"
+    data = new_reg
+    emit "#{data} = bitcast i8* #{data_raw} to #{elt}*"
+    emit_array_set_data(arr, elem_type, data)
+    emit_array_set_len(arr, elem_type, '0')
+    emit_array_set_cap(arr, elem_type, cap_ref)
+    arr
   end
 
   # ---------- Helpers ----------
