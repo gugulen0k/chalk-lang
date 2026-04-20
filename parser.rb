@@ -97,15 +97,7 @@ class Parser
     when TokenType::RETURN                then parse_return
     when TokenType::IF                    then parse_if
     when TokenType::WHILE                 then parse_while
-    when TokenType::FOR                   then parse_for
-    when TokenType::MATCH                 then parse_match_stmt
-    when TokenType::IMPORT                then parse_import
-    when TokenType::CONST                 then parse_const
     when TokenType::RAISE                 then parse_raise
-    when TokenType::BREAK                 then parse_break
-    when TokenType::SKIP                  then parse_skip
-    when TokenType::STRUCT                then parse_struct
-    when TokenType::ENUM                  then parse_enum
     when TokenType::ERROR                 then parse_error_decl
     else
       expr = parse_expr
@@ -253,128 +245,6 @@ class Parser
     AST::While.new(condition, body)
   end
 
-  def parse_for
-    expect(TokenType::FOR)
-    first = expect(TokenType::IDENT).lexeme
-    var, index_var = if check(TokenType::COMMA)
-                       advance
-                       [expect(TokenType::IDENT).lexeme, first]
-                     else
-                       [first, nil]
-                     end
-    expect(TokenType::IN)
-    iterable = parse_expr
-    expect_newline_or_eof
-    body = parse_block
-    expect(TokenType::END_KW)
-    expect_newline_or_eof
-    AST::ForIn.new(var, index_var, iterable, body)
-  end
-
-  def parse_match_stmt
-    node = parse_match_expr
-    expect_newline_or_eof
-    AST::ExprStmt.new(node)
-  end
-
-  def parse_match_expr
-    expect(TokenType::MATCH)
-    value = parse_expr
-    expect_newline_or_eof
-    arms = parse_match_arms
-    expect(TokenType::END_KW)
-    AST::Match.new(value, arms)
-  end
-
-  def parse_match_arms
-    arms = []
-    skip_newlines
-    until check(TokenType::END_KW) || at_end?
-      arms << parse_match_arm
-      skip_newlines
-    end
-    arms
-  end
-
-  def parse_match_arm
-    pattern = nil
-    guard   = nil
-
-    if check(TokenType::WITH)
-      advance
-      name    = expect(TokenType::IDENT).lexeme
-      pattern = AST::WithPattern.new(name)
-      if check(TokenType::IF)
-        advance
-        guard = parse_expr
-      end
-    elsif check(TokenType::IDENT) && peek_type(1) == TokenType::DOT
-      enum_name = advance.lexeme
-      advance # DOT
-      variant = expect(TokenType::IDENT).lexeme
-      binding = nil
-      if check(TokenType::LPAREN)
-        advance
-        binding = expect(TokenType::IDENT).lexeme
-        expect(TokenType::RPAREN)
-        if check(TokenType::IF)
-          advance
-          guard = parse_expr
-        end
-      end
-      pattern = AST::EnumPattern.new(enum_name, variant, binding)
-    elsif check(TokenType::IDENT)
-      pattern = AST::IdentPattern.new(advance.lexeme)
-    else
-      pattern = AST::LiteralPattern.new(parse_primary)
-    end
-
-    expect(TokenType::FAT_ARROW)
-    body = parse_expr
-    expect_newline_or_eof
-    AST::MatchArm.new(pattern, guard, body)
-  end
-
-  def parse_import
-    expect(TokenType::IMPORT)
-    path = [expect(TokenType::IDENT).lexeme]
-    while check(TokenType::COLON_COLON)
-      advance
-      if check(TokenType::LBRACE)
-        advance
-        items = []
-        loop do
-          items << scan_name
-          break unless check(TokenType::COMMA)
-
-          advance
-        end
-        expect(TokenType::RBRACE)
-        expect_newline_or_eof
-        return AST::ImportDecl.new(path, nil, items)
-      end
-      path << expect(TokenType::IDENT).lexeme
-    end
-    import_alias = nil
-    if check(TokenType::AS)
-      advance
-      import_alias = expect(TokenType::IDENT).lexeme
-    end
-    expect_newline_or_eof
-    AST::ImportDecl.new(path, import_alias, nil)
-  end
-
-  def parse_const
-    expect(TokenType::CONST)
-    name = expect(TokenType::IDENT).lexeme
-    expect(TokenType::COLON)
-    type = parse_type
-    expect(TokenType::EQUAL)
-    value = parse_expr
-    expect_newline_or_eof
-    AST::ConstDecl.new(name, type, value)
-  end
-
   def parse_raise
     expect(TokenType::RAISE)
     expr      = parse_expr
@@ -409,78 +279,10 @@ class Parser
   def parse_pub
     advance # pub
     case current&.type
-    when TokenType::FUNC   then parse_func_decl(pub: true)
-    when TokenType::STRUCT then parse_struct(pub: true)
-    when TokenType::ENUM   then parse_enum(pub: true)
-    when TokenType::ERROR  then parse_error_decl(pub: true)
+    when TokenType::FUNC  then parse_func_decl(pub: true)
+    when TokenType::ERROR then parse_error_decl(pub: true)
     else parse_error("Expected declaration after 'pub' at line #{current&.line}")
     end
-  end
-
-  def parse_struct(pub: false)
-    expect(TokenType::STRUCT)
-    name = expect(TokenType::IDENT).lexeme
-    expect_newline_or_eof
-    fields    = []
-    func_defs = []
-    skip_newlines
-    until check(TokenType::END_KW) || at_end?
-      if check(TokenType::FUNC) || (check(TokenType::PUB) && peek_type(1) == TokenType::FUNC)
-        pub_method = check(TokenType::PUB) && advance
-        func_defs << parse_func_decl(pub: !pub_method.nil?)
-      else
-        mutable = false
-        if check(TokenType::MUT)
-          advance
-          mutable = true
-        end
-        fname = expect(TokenType::IDENT).lexeme
-        expect(TokenType::COLON)
-        ftype   = parse_type
-        default = if check(TokenType::EQUAL)
-                    (advance
-                     parse_expr)
-                  end
-        expect_newline_or_eof
-        fields << AST::StructField.new(mutable, fname, ftype, default)
-      end
-      skip_newlines
-    end
-    expect(TokenType::END_KW)
-    expect_newline_or_eof
-    AST::StructDecl.new(pub, name, fields, func_defs)
-  end
-
-  def parse_enum(pub: false)
-    expect(TokenType::ENUM)
-    name     = expect(TokenType::IDENT).lexeme
-    variants = []
-    if check(TokenType::LPAREN)
-      advance
-      loop do
-        variants << AST::EnumVariant.new(expect(TokenType::IDENT).lexeme, nil)
-        break unless check(TokenType::COMMA)
-
-        advance
-      end
-      expect(TokenType::RPAREN)
-    else
-      expect_newline_or_eof
-      skip_newlines
-      until check(TokenType::END_KW) || at_end?
-        vname = expect(TokenType::IDENT).lexeme
-        vtype = if check(TokenType::COLON)
-                  (advance
-                   parse_type)
-                end
-        expect_newline_or_eof
-        variants << AST::EnumVariant.new(vname, vtype)
-        skip_newlines
-      end
-      expect(TokenType::END_KW)
-    end
-    expect_newline_or_eof
-    AST::EnumDecl.new(pub, name, variants)
   end
 
   def parse_error_decl(pub: false)
@@ -585,7 +387,11 @@ class Parser
 
   def parse_unary
     return AST::UnaryOp.new(advance.lexeme, parse_unary) if check(TokenType::MINUS)
-    return AST::Try.new(parse_unary) if check(TokenType::TRY)
+
+    if check(TokenType::TRY)
+      advance
+      return AST::Try.new(parse_unary)
+    end
 
     parse_postfix
   end
@@ -660,25 +466,6 @@ class Parser
       expr = parse_expr
       expect(TokenType::RPAREN)
       expr
-    when TokenType::LBRACKET
-      advance
-      if check(TokenType::RESERVE)
-        advance
-        cap = parse_expr
-        expect(TokenType::RBRACKET)
-        AST::ArrayReserve.new(cap)
-      elsif check(TokenType::RBRACKET)
-        advance
-        AST::ArrayLit.new([])
-      else
-        elems = [parse_expr]
-        while check(TokenType::COMMA)
-          advance
-          elems << parse_expr
-        end
-        expect(TokenType::RBRACKET)
-        AST::ArrayLit.new(elems)
-      end
     when TokenType::IDENT
       ident_tok = advance
       name      = ident_tok.lexeme
@@ -695,23 +482,9 @@ class Parser
         args = parse_args
         expect(TokenType::RPAREN)
         AST::Call.new(AST::Ident.new(name, line), args, line)
-      elsif check(TokenType::LBRACE)
-        advance
-        fields = []
-        until check(TokenType::RBRACE)
-          fname = expect(TokenType::IDENT).lexeme
-          expect(TokenType::COLON)
-          fval = parse_expr
-          fields << [fname, fval]
-          advance if check(TokenType::COMMA)
-        end
-        expect(TokenType::RBRACE)
-        AST::StructLit.new(name, fields)
       else
         AST::Ident.new(name, line)
       end
-    when TokenType::MATCH
-      parse_match_expr
     else
       parse_error("Unexpected token #{current&.type} '#{current&.lexeme}' at line #{current&.line}")
     end

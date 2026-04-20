@@ -1,0 +1,36 @@
+error MathError ( DivisionByZero, Overflow )
+
+func div!(a: int, b: int) -> int
+  raise MathError.DivisionByZero if b == 0
+  return a / b
+end
+
+func safe_div(a: int, b: int) -> int
+  result: int = try div!(a, b)
+  return result
+end
+
+func add(a: int, b: int) -> int
+  return a + b
+end
+
+func main() -> void
+  x: int = add(3, 4)
+  if x > 5
+    println('big')
+  else
+    println('small')
+  end
+
+  result: int = div!(10, 0) catch -1
+  println(f'catch default: {result}')
+
+  good: int = div!(10, 2) catch -1
+  println(f'10 / 2 = {good}')
+
+  mut i: int = 0
+  while i < 3
+    println(i)
+    i = i + 1
+  end
+end

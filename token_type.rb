@@ -36,10 +36,9 @@ module TokenType
   RAISE   = :RAISE
   TRY     = :TRY
   CATCH   = :CATCH
-  AND     = :AND
-  OR      = :OR
-  NOT     = :NOT
-  RESERVE = :RESERVE # 'reserve' keyword for array pre-allocation
+  AND = :AND
+  OR  = :OR
+  NOT = :NOT
 
   # --- Built-in types (appear in type annotations) ------------
   INT    = :INT    # the word 'int' in 'x: int = 5'

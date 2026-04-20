@@ -82,9 +82,9 @@ test_ok 'f-string: variable + function call + nested + expr',
         "#{DIR}/fstring.sf",
         "10 + 5 = 15\n10 * 5 = 50\nnested: 30\nexpr: 15"
 
-test_ok 'control flow: for loop, while loop, if/else',
+test_ok 'control flow: while loop, if/else',
         "#{DIR}/control_flow.sf",
-        "sum 1..10 = 55\nfirst power of 2 >= 32 is 32\nB"
+        "first power of 2 >= 32 is 32\nB"
 
 test_ok 'recursion: factorial and fibonacci',
         "#{DIR}/recursion.sf",
@@ -94,9 +94,9 @@ test_ok 'bool logic: bool functions, and/or/not',
         "#{DIR}/bool_logic.sf",
         "1\n0\n1\n0\n0\n1\n0"
 
-test_ok 'fizzbuzz (1..20)',
-        'examples/fizzbuzz.sf',
-        "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz"
+test_ok 'error handling: raise, catch default, try propagation',
+        'examples/v01_test.sf',
+        "big\ncatch default: -1\n10 / 2 = 5\n0\n1\n2"
 
 test_ok 'hello world',
         'examples/hello.sf',

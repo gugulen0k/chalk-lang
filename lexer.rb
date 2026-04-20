@@ -98,7 +98,6 @@ class Lexer
     'and' => TokenType::AND,
     'or' => TokenType::OR,
     'not' => TokenType::NOT,
-    'reserve' => TokenType::RESERVE,
     'true' => TokenType::TRUE,
     'false' => TokenType::FALSE,
     'int' => TokenType::INT,
