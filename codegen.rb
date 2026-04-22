@@ -10,7 +10,7 @@ require_relative 'parser'
 class Codegen
   INTERP_REGEX = /\{([^}]+)\}/.freeze
 
-  ARITH_INT   = { '+' => 'add',  '-' => 'sub',  '*' => 'mul',  '/' => 'sdiv', '%' => 'srem' }.freeze
+  ARITH_INT   = { '+' => 'add',  '-' => 'sub',  '*' => 'mul',  '/' => 'sdiv' }.freeze
   ARITH_FLOAT = { '+' => 'fadd', '-' => 'fsub', '*' => 'fmul', '/' => 'fdiv' }.freeze
   ICMP_OPS    = { '==' => 'icmp eq',  '!=' => 'icmp ne',  '<'  => 'icmp slt',
                   '<=' => 'icmp sle', '>'  => 'icmp sgt', '>=' => 'icmp sge' }.freeze
@@ -18,16 +18,16 @@ class Codegen
                   '<=' => 'fcmp ole', '>'  => 'fcmp ogt', '>=' => 'fcmp oge' }.freeze
 
   def initialize
-    @globals     = []
-    @functions   = []
-    @str_count   = 0
-    @error_codes = {}
+    @globals       = []
+    @functions     = []
+    @str_count     = 0
+    @error_codes   = {}
     @error_counter = 1
-    @func_table  = {
+    @func_table    = {
       'println' => { params: [:string], return_type: :void },
-      'print'   => { params: [:string], return_type: :void },
+      'print' => { params: [:string], return_type: :void },
       'readline' => { params: [], return_type: :string },
-      'exit'    => { params: [:int], return_type: :void }
+      'exit' => { params: [:int], return_type: :void }
     }
     reset_func_state
   end
@@ -36,7 +36,7 @@ class Codegen
     # First pass: collect error codes and function signatures
     program.stmts.each do |s|
       case s
-      when AST::FuncDecl  then register_func(s)
+      when AST::FuncDecl then register_func(s)
       when AST::ErrorDecl
         s.variants.each do |v|
           @error_codes["#{s.name}.#{v}"] = @error_counter
@@ -69,7 +69,6 @@ class Codegen
     @reg              = 0
     @label_num        = 0
     @locals           = {}
-    @loop_stack       = []
     @alloca_count     = Hash.new(0)
     @current_ret_type = :void
   end
@@ -218,7 +217,13 @@ class Codegen
     end
 
     node.body.each { |s| emit_stmt(s) }
-    emit(is_main ? 'ret i32 0' : (node.return_type == :void ? 'ret void' : 'unreachable')) unless terminates?
+    unless terminates?
+      emit(if is_main
+             'ret i32 0'
+           else
+             (node.return_type == :void ? 'ret void' : 'unreachable')
+           end)
+    end
 
     @ir << '}'
     @ir << ''
@@ -307,17 +312,13 @@ class Codegen
     cond_ref, = emit_expr(node.condition)
     emit "br i1 #{cond_ref}, label %#{body_lbl}, label %#{end_lbl}"
     emit "#{body_lbl}:"
-
-    @loop_stack.push({ cond: cond_lbl, end: end_lbl })
     node.body.each { |s| emit_stmt(s) }
-    @loop_stack.pop
     emit "br label %#{cond_lbl}" unless terminates?
     emit "#{end_lbl}:"
   end
 
   def emit_raise(node)
-    code = resolve_error_code(node.expr)
-
+    code      = resolve_error_code(node.expr)
     raise_lbl = new_label('raise')
     cont_lbl  = new_label('rc')
 
@@ -348,10 +349,11 @@ class Codegen
   end
 
   def resolve_error_code(expr)
+    # Error variants are referenced as bare identifiers with dot notation:
+    # e.g. MathError.DivByZero parses as Ident("MathError") in a field-access
+    # position. For v0.1 we resolve by matching "Name.Variant" from the expr.
     key = case expr
-          when AST::FieldAccess
-            recv = expr.receiver.is_a?(AST::Ident) ? expr.receiver.name : nil
-            recv ? "#{recv}.#{expr.field}" : nil
+          when AST::Ident then expr.name # bare raise — no matching error code
           end
     @error_codes[key] || 1
   end
@@ -368,9 +370,7 @@ class Codegen
     when AST::BinaryOp  then emit_binary(node)
     when AST::UnaryOp   then emit_unary(node)
     when AST::Call      then emit_call(node)
-    when AST::Ternary   then emit_ternary(node)
     when AST::Try       then emit_try(node)
-    when AST::Catch     then emit_catch(node)
     else ['0', :int]
     end
   end
@@ -417,7 +417,7 @@ class Codegen
     reg   = new_reg
 
     case op
-    when '+', '-', '*', '/', '%'
+    when '+', '-', '*', '/'
       instr = use_float ? ARITH_FLOAT[op] : ARITH_INT[op]
       emit "#{reg} = #{instr} #{op_lt} #{lref}, #{rref}"
       [reg, use_float ? :float : ltype]
@@ -529,49 +529,15 @@ class Codegen
     end
   end
 
-  def parse_interp_expr(expr_str)
-    lexer = Lexer.new(expr_str)
-    lexer.scan_tokens
-    Parser.new(lexer.tokens).send(:parse_expr)
-  end
-
-  def emit_ternary(node)
-    cond_ref, = emit_expr(node.condition)
-    res_type  = infer_type(node.then_expr)
-    ptr       = "#{new_reg}.tern"
-    then_lbl  = new_label('tt')
-    else_lbl  = new_label('te')
-    merge_lbl = new_label('tm')
-
-    emit "#{ptr} = alloca #{lt(res_type)}"
-    emit "br i1 #{cond_ref}, label %#{then_lbl}, label %#{else_lbl}"
-
-    emit "#{then_lbl}:"
-    tr, = emit_expr(node.then_expr)
-    emit "store #{lt(res_type)} #{tr}, #{lt(res_type)}* #{ptr}"
-    emit "br label %#{merge_lbl}"
-
-    emit "#{else_lbl}:"
-    er, = emit_expr(node.else_expr)
-    emit "store #{lt(res_type)} #{er}, #{lt(res_type)}* #{ptr}"
-    emit "br label %#{merge_lbl}"
-
-    emit "#{merge_lbl}:"
-    res = new_reg
-    emit "#{res} = load #{lt(res_type)}, #{lt(res_type)}* #{ptr}"
-    [res, res_type]
-  end
-
-  # ---------- Error handling ----------
-
+  # try — propagate: if __sheft_err_code != 0, return zero-value immediately
   def emit_try(node)
     ref, type = emit_expr(node.expr)
     err_val   = new_reg
     emit "#{err_val} = load i64, i64* @__sheft_err_code"
-    has_err   = new_reg
+    has_err = new_reg
     emit "#{has_err} = icmp ne i64 #{err_val}, 0"
-    prop_lbl  = new_label('prop')
-    cont_lbl  = new_label('tc')
+    prop_lbl = new_label('prop')
+    cont_lbl = new_label('tc')
     emit "br i1 #{has_err}, label %#{prop_lbl}, label %#{cont_lbl}"
     emit "#{prop_lbl}:"
     emit_zero_return
@@ -579,39 +545,10 @@ class Codegen
     [ref, type]
   end
 
-  def emit_catch(node)
-    ref, type = emit_expr(node.expr)
-    err_val   = new_reg
-    emit "#{err_val} = load i64, i64* @__sheft_err_code"
-    has_err   = new_reg
-    emit "#{has_err} = icmp ne i64 #{err_val}, 0"
-
-    res_ptr  = "#{new_reg}.cres"
-    emit "#{res_ptr} = alloca #{lt(type)}"
-    ok_lbl   = new_label('cok')
-    catch_lbl = new_label('ch')
-    cont_lbl  = new_label('cc')
-
-    emit "br i1 #{has_err}, label %#{catch_lbl}, label %#{ok_lbl}"
-
-    emit "#{ok_lbl}:"
-    emit "store #{lt(type)} #{ref}, #{lt(type)}* #{res_ptr}"
-    emit "br label %#{cont_lbl}"
-
-    emit "#{catch_lbl}:"
-    emit "store i64 0, i64* @__sheft_err_code"
-    if node.handler.is_a?(AST::CatchBlock)
-      emit "store #{lt(type)} #{zero_val(type)}, #{lt(type)}* #{res_ptr}"
-    else
-      default_ref, = emit_expr(node.handler)
-      emit "store #{lt(type)} #{default_ref}, #{lt(type)}* #{res_ptr}"
-    end
-    emit "br label %#{cont_lbl}"
-
-    emit "#{cont_lbl}:"
-    result = new_reg
-    emit "#{result} = load #{lt(type)}, #{lt(type)}* #{res_ptr}"
-    [result, type]
+  def parse_interp_expr(expr_str)
+    lexer = Lexer.new(expr_str)
+    lexer.scan_tokens
+    Parser.new(lexer.tokens).send(:parse_expr)
   end
 
   # ---------- Helpers ----------

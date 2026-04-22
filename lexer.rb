@@ -4,6 +4,7 @@
 
 require_relative 'token_type'
 require_relative 'token'
+require_relative 'errors'
 
 # :nodoc:
 class Lexer
@@ -12,19 +13,15 @@ class Lexer
   POSSIBLE_TOKENS = {
     '+' => -> { add_token(type: TokenType::PLUS) },
     '*' => -> { add_token(type: TokenType::STAR) },
-    '%' => -> { add_token(type: TokenType::PERCENT) },
     '(' => -> { add_token(type: TokenType::LPAREN) },
     ')' => -> { add_token(type: TokenType::RPAREN) },
-    '[' => -> { add_token(type: TokenType::LBRACKET) },
-    ']' => -> { add_token(type: TokenType::RBRACKET) },
-    '{' => -> { add_token(type: TokenType::LBRACE) },
-    '}' => -> { add_token(type: TokenType::RBRACE) },
     ',' => -> { add_token(type: TokenType::COMMA) },
     ' ' => -> {},
     "\r" => -> {},
     "\t" => -> {},
     "\n" => lambda {
       @line += 1
+      @line_start = @current
       add_token(type: TokenType::NEWLINE)
     },
     '#' => lambda do
@@ -36,16 +33,8 @@ class Lexer
         scan_line_comment
       end
     end,
-    '.' => lambda do
-      if match?('.')
-        match?('=') ? add_token(type: TokenType::DOT_DOT_EQUAL) : add_token(type: TokenType::DOT_DOT)
-      else
-        add_token(type: TokenType::DOT)
-      end
-    end,
-    ':' => lambda do
-      match?(':') ? add_token(type: TokenType::COLON_COLON) : add_token(type: TokenType::COLON)
-    end,
+    '.' => -> { add_token(type: TokenType::DOT) },
+    ':' => -> { add_token(type: TokenType::COLON) },
     '>' => lambda do
       match?('=') ? add_token(type: TokenType::GREATER_EQUAL) : add_token(type: TokenType::GREATER)
     end,
@@ -53,21 +42,25 @@ class Lexer
       match?('=') ? add_token(type: TokenType::LESS_EQUAL) : add_token(type: TokenType::LESS)
     end,
     '=' => lambda do
-      if match?('=')
-        add_token(type: TokenType::EQUAL_EQUAL)
-      else
-        match?('>') ? add_token(type: TokenType::FAT_ARROW) : add_token(type: TokenType::EQUAL)
-      end
+      match?('=') ? add_token(type: TokenType::EQUAL_EQUAL) : add_token(type: TokenType::EQUAL)
     end,
+    # ! is only valid as != — standalone ! is not valid Sheft syntax
     '!' => lambda do
-      match?('=') ? add_token(type: TokenType::BANG_EQUAL) : add_token(type: TokenType::BANG)
+      if match?('=')
+        add_token(type: TokenType::BANG_EQUAL)
+      else
+        lex_error("unexpected character '!'", hint: "did you mean '!='? standalone '!' is not valid in Sheft")
+      end
     end,
     '-' => lambda do
       match?('>') ? add_token(type: TokenType::ARROW) : add_token(type: TokenType::MINUS)
     end,
     '/' => -> { add_token(type: TokenType::SLASH) },
-    '?' => -> { add_token(type: TokenType::QUESTION) },
-    "'" => -> { scan_string(fstring: false) }
+    # ' opens a string literal — double quotes are a compile error in Sheft
+    "'" => -> { scan_string },
+    '"' => lambda do
+      lex_error('strings use single quotes in Sheft', hint: "replace \" with '")
+    end
   }.freeze
 
   KEYWORDS = {
@@ -77,24 +70,11 @@ class Lexer
     'else' => TokenType::ELSE,
     'end' => TokenType::END_KW,
     'while' => TokenType::WHILE,
-    'for' => TokenType::FOR,
-    'in' => TokenType::IN,
-    'break' => TokenType::BREAK,
-    'skip' => TokenType::SKIP,
-    'match' => TokenType::MATCH,
-    'with' => TokenType::WITH,
     'mut' => TokenType::MUT,
     'pub' => TokenType::PUB,
-    'struct' => TokenType::STRUCT,
-    'enum' => TokenType::ENUM,
     'error' => TokenType::ERROR,
-    'import' => TokenType::IMPORT,
-    'from' => TokenType::FROM,
-    'as' => TokenType::AS,
-    'const' => TokenType::CONST,
     'raise' => TokenType::RAISE,
     'try' => TokenType::TRY,
-    'catch' => TokenType::CATCH,
     'and' => TokenType::AND,
     'or' => TokenType::OR,
     'not' => TokenType::NOT,
@@ -108,23 +88,21 @@ class Lexer
   }.freeze
 
   def initialize(source)
-    @source = source
-    @start = 0
-    @current = 0
-    @line = 1
-    @tokens = []
+    @source     = source
+    @start      = 0
+    @current    = 0
+    @line       = 1
+    @line_start = 0 # tracks the index where the current line began
+    @tokens     = []
   end
 
   def scan_tokens
     until at_end?
       @start = @current
-
       scan_token
     end
 
-    eof_token = Token.new(type: TokenType::EOF, lexeme: '', literal: nil, line: @line)
-    @tokens.push(eof_token)
-
+    @tokens.push(Token.new(type: TokenType::EOF, lexeme: '', literal: nil, line: @line))
     @tokens
   end
 
@@ -132,28 +110,29 @@ class Lexer
 
   def scan_token
     character = advance
-    possible_token = POSSIBLE_TOKENS[character]
+    handler   = POSSIBLE_TOKENS[character]
 
-    if possible_token
-      instance_exec(&possible_token)
+    if handler
+      instance_exec(&handler)
     elsif alpha?(character)
-      scan_identifier_or_keyword(character)
+      scan_identifier_or_keyword
     elsif digit?(character)
-      scan_number(character)
+      scan_number
     else
-      print_error(character)
+      lex_error("unexpected character '#{character}'")
     end
   end
 
   def add_token(type:, literal: nil)
     lexeme = @source[@start...@current]
-    token  = Token.new(lexeme: lexeme, type: type, literal: literal, line: @line)
-
-    @tokens.push(token)
+    col    = @start - @line_start + 1
+    @tokens.push(Token.new(type: type, lexeme: lexeme, literal: literal, line: @line, col: col))
   end
 
-  def print_error(character)
-    puts "[line ##{@line}] Unexpected character '#{character}'"
+  # Raises a LexError with source location attached.
+  def lex_error(msg, hint: nil)
+    col = @start - @line_start + 1
+    raise LexError.new(msg, line: @line, col: col, hint: hint)
   end
 
   def advance
@@ -175,8 +154,9 @@ class Lexer
     @source[pos]
   end
 
-  def match?(character)
-    return false unless character == peek
+  def match?(expected)
+    return false if at_end?
+    return false if @source[@current] != expected
 
     @current += 1
     true
@@ -198,133 +178,87 @@ class Lexer
     alpha?(char) || digit?(char)
   end
 
-  def scan_identifier_or_keyword(first_char)
-    # 'f' followed by "'" is an f-string, not an identifier
-    if first_char == 'f' && peek == "'"
-      advance # consume the opening quote
-      scan_string(fstring: true)
-      return
-    end
-
+  # Scans an identifier or keyword.
+  # Identifiers in Sheft may end with a single ! or ? suffix:
+  #   empty?   tokenize!
+  # The suffix is consumed as part of the lexeme — no standalone BANG/QUESTION tokens.
+  def scan_identifier_or_keyword
     advance while alphanumeric?(peek)
+    match?('!') || match?('?')
+
     text = @source[@start...@current]
     type = KEYWORDS[text] || TokenType::IDENT
     add_token(type: type)
   end
 
-  def scan_number(first_char)
-    # Detect base prefix: 0x, 0b, 0o
-    if first_char == '0'
-      case peek
-      when 'x', 'X'
-        advance
-        advance while @source[@current]&.match?(/[0-9a-fA-F_]/)
-        return add_token(type: TokenType::INT_LIT, literal: @source[@start...@current].to_i(16))
-      when 'b', 'B'
-        advance
-        advance while @source[@current]&.match?(/[01_]/)
-        return add_token(type: TokenType::INT_LIT, literal: @source[@start...@current].to_i(2))
-      when 'o', 'O'
-        advance
-        advance while @source[@current]&.match?(/[0-7_]/)
-        return add_token(type: TokenType::INT_LIT, literal: @source[@start...@current].to_i(8))
-      end
-    end
+  def scan_number
+    advance while digit?(peek)
 
-    advance while digit?(peek) || peek == '_'
-
-    is_float = peek == '.' && digit?(peek_ahead(1))
-    if is_float
-      advance # consume '.'
-      advance while digit?(peek) || peek == '_'
-    end
-
-    # Scientific notation: e or E followed by optional sign and digits
-    if peek&.match?(/[eE]/) && (digit?(peek_ahead(1)) || (peek_ahead(1)&.match?(/[+-]/) && digit?(peek_ahead(2))))
-      advance # e/E
-      advance if peek&.match?(/[+-]/)
+    if peek == '.' && digit?(peek_ahead(1))
+      advance
       advance while digit?(peek)
-      is_float = true
-    end
-
-    raw = @source[@start...@current].delete('_')
-    if is_float
-      add_token(type: TokenType::FLOAT_LIT, literal: raw.to_f)
+      add_token(type: TokenType::FLOAT_LIT, literal: @source[@start...@current].to_f)
     else
-      add_token(type: TokenType::INT_LIT, literal: raw.to_i)
+      add_token(type: TokenType::INT_LIT, literal: @source[@start...@current].to_i)
     end
   end
 
-  def scan_string(fstring:)
-    # Triple-quote check
-    if peek == "'" && peek_ahead(1) == "'"
-      advance
-      advance
-      scan_triple_string(fstring: fstring)
-      return
-    end
-
-    str_start = @current
-    loop do
-      return print_error('unterminated string') if at_end? || peek == "\n"
-
-      ch = advance
-      break if ch == "'"
-    end
-
-    literal = @source[str_start...(@current - 1)]
-    add_token(type: TokenType::STRING_LIT, literal: literal)
-  end
-
-  def scan_triple_string(fstring: false) # rubocop:disable Lint/UnusedMethodArgument
-    str_start = @current
-    loop do
-      return print_error('unterminated triple-quoted string') if at_end?
-
-      @line += 1 if peek == "\n"
-
-      if peek == "'" && peek_ahead(1) == "'" && peek_ahead(2) == "'"
-        literal = @source[str_start...@current]
-        advance
-        advance
-        advance
-        # Strip leading/trailing newlines per spec
-        literal = literal.delete_prefix("\n").delete_suffix("\n")
-        add_token(type: TokenType::STRING_LIT, literal: literal)
-        return
+  # Single-quoted string literal. Double quotes raise a LexError.
+  def scan_string
+    while peek != "'" && !at_end?
+      if peek == "\n"
+        @line += 1
+        @line_start = @current + 1
       end
-
       advance
     end
-  end
 
-  def scan_doc_comment
-    doc_start = @current
+    lex_error('unterminated string literal', hint: "add a closing ' to end the string") if at_end?
 
-    advance until at_end? || (peek == ']' && peek_ahead(1) == '#' && peek_ahead(2) == '#')
-
-    return print_error('unterminated doc comment') if at_end?
-
-    advance # ]
-    advance # #
-    advance # #
-
-    doc_literal = @source[doc_start...(@current - 3)]
-
-    add_token(type: TokenType::DOC_COMMENT, literal: doc_literal)
-  end
-
-  def scan_multiline_comment
-    advance until at_end? || (peek == ']' && peek_ahead(1) == '#')
-
-    return print_error('unterminated multiline comment') if at_end?
-
-    advance # ]
-    advance # #
+    advance # closing '
+    value = @source[(@start + 1)...(@current - 1)]
+    add_token(type: TokenType::STRING_LIT, literal: value)
   end
 
   def scan_line_comment
     advance while peek != "\n" && !at_end?
   end
+
+  def scan_multiline_comment
+    depth = 1
+    until at_end?
+      if peek == '#' && peek_ahead(1) == '['
+        advance
+        advance
+        depth += 1
+      elsif peek == ']' && peek_ahead(1) == '#'
+        advance
+        advance
+        depth -= 1
+        break if depth.zero?
+      else
+        if peek == "\n"
+          @line += 1
+          @line_start = @current + 1
+        end
+        advance
+      end
+    end
+  end
+
+  def scan_doc_comment
+    content = +''
+    until at_end?
+      if peek == ']' && peek_ahead(1) == '#' && peek_ahead(2) == '#'
+        advance
+        advance
+        advance
+        break
+      end
+      content << advance
+    end
+    add_token(type: TokenType::DOC_COMMENT, literal: content.strip)
+  end
 end
+
 # rubocop:enable Metrics/ClassLength, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/AbcSize, Metrics/PerceivedComplexity

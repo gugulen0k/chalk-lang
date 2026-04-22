@@ -2,16 +2,17 @@
 
 # :nodoc:
 class Token
-  attr_reader :lexeme, :line, :literal, :type
+  attr_reader :type, :lexeme, :literal, :line, :col
 
-  def initialize(lexeme:, literal:, type:, line:)
+  def initialize(type:, lexeme:, literal:, line:, col: nil)
+    @type    = type
     @lexeme  = lexeme
     @literal = literal
-    @type    = type
     @line    = line
+    @col     = col
   end
 
   def to_s
-    @type
+    @lexeme
   end
 end

@@ -6,35 +6,85 @@ require_relative 'type_checker'
 require_relative 'codegen'
 require_relative 'errors'
 
-src      = ARGV[0] || './examples/test.sf'
-out      = src.sub(/\.sf$/, '.ll')
-raw_code = File.read(src)
+# ─────────────────────────────────────────────────────────────
+#  Diagnostic renderer
+#  Produces output like:
+#
+#  error[type]: expected 'int', got 'string'
+#    --> src/main.sf:12:9
+#     |
+#  12 |   x: int = 'hello'
+#     |            ^^^^^^^ type mismatch here
+#     |
+#     = hint: change the value to an integer, e.g. 42
+# ─────────────────────────────────────────────────────────────
+module Diagnostic
+  # ANSI helpers
+  RED    = "\e[1;31m"
+  YELLOW = "\e[1;33m"
+  CYAN   = "\e[36m"
+  BOLD   = "\e[1m"
+  DIM    = "\e[2m"
+  RESET  = "\e[0m"
 
-def render_source_line(err, lines)
-  src_line = lines[err.line - 1]
-  return unless src_line
+  PHASE_LABEL = {
+    lex: 'lex',
+    parse: 'parse',
+    type: 'type',
+    unknown: 'error'
+  }.freeze
 
-  gutter = err.line.to_s
-  pad    = ' ' * gutter.length
-  warn "#{pad} \e[36m|\e[0m"
-  warn "#{gutter} \e[36m|\e[0m  #{src_line.rstrip}"
-  warn "#{pad} \e[36m|\e[0m"
-end
+  def self.render(err, filepath, source)
+    lines = source.lines
 
-def render_error(err, src, raw_code)
-  warn "\e[1;31merror:\e[0m \e[1m#{err.message}\e[0m"
+    phase = PHASE_LABEL[err.phase] || 'error'
+    warn "#{RED}error[#{phase}]#{RESET}#{BOLD}: #{err.message}#{RESET}"
 
-  if err.line
-    warn "  \e[36m-->\e[0m #{src}:#{err.line}"
-    render_source_line(err, raw_code.lines)
+    if err.line
+      col_info = err.col ? ":#{err.col}" : ''
+      warn "  #{CYAN}-->#{RESET} #{filepath}:#{err.line}#{col_info}"
+
+      render_snippet(lines, err)
+    end
+
+    warn "  #{YELLOW}= hint:#{RESET} #{err.hint}" if err.hint
+
+    warn ''
   end
 
-  warn "  \e[33m= hint:\e[0m #{err.hint}" if err.hint
-  warn ''
+  def self.render_snippet(lines, err)
+    line_num  = err.line
+    src_line  = lines[line_num - 1]
+    return unless src_line
+
+    gutter    = line_num.to_s
+    pad       = ' ' * gutter.length
+
+    warn "#{pad} #{CYAN}|#{RESET}"
+    warn "#{CYAN}#{gutter}#{RESET} #{CYAN}|#{RESET}  #{src_line.rstrip}"
+
+    # Draw the ^^^ underline if we have column + token info
+    if err.col
+      token_len = err.token&.length || 1
+      prefix    = ' ' * (err.col - 1) # spaces before the caret
+      carets    = "#{RED}#{'~' * token_len}#{RESET}"
+      warn "#{pad} #{CYAN}|#{RESET}  #{prefix}#{carets}"
+    else
+      warn "#{pad} #{CYAN}|#{RESET}"
+    end
+  end
+  private_class_method :render_snippet
 end
 
+# ─────────────────────────────────────────────────────────────
+#  Entry point
+# ─────────────────────────────────────────────────────────────
+src  = ARGV[0] || './examples/hello.sf'
+out  = src.sub(/\.sf$/, '.ll')
+code = File.read(src)
+
 begin
-  lexer = Lexer.new(raw_code)
+  lexer = Lexer.new(code)
   lexer.scan_tokens
 
   ast = Parser.new(lexer.tokens).parse
@@ -42,8 +92,8 @@ begin
 
   ir = Codegen.new.generate(ast)
   File.write(out, ir)
-  puts "Written: #{out}"
+  puts "[32m\u2714[0m compiled \e[1m#{src}\e[0m  \e[2m→ #{out}\e[0m"
 rescue SheftError => e
-  render_error(e, src, raw_code)
+  Diagnostic.render(e, src, code)
   exit 1
 end
