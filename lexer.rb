@@ -56,6 +56,7 @@ class Lexer
       match?('>') ? add_token(type: TokenType::ARROW) : add_token(type: TokenType::MINUS)
     end,
     '/' => -> { add_token(type: TokenType::SLASH) },
+    '%' => -> { add_token(type: TokenType::PERCENT) },
     # ' opens a string literal — double quotes are a compile error in Sheft
     "'" => -> { scan_string },
     '"' => lambda do
@@ -182,11 +183,20 @@ class Lexer
   # Identifiers in Sheft may end with a single ! or ? suffix:
   #   empty?   tokenize!
   # The suffix is consumed as part of the lexeme — no standalone BANG/QUESTION tokens.
+  # The f prefix on string literals (f'...') is syntactic sugar — stripped here.
   def scan_identifier_or_keyword
     advance while alphanumeric?(peek)
     match?('!') || match?('?')
 
     text = @source[@start...@current]
+
+    if text == 'f' && peek == "'"
+      @start = @current
+      advance # consume opening '
+      scan_string
+      return
+    end
+
     type = KEYWORDS[text] || TokenType::IDENT
     add_token(type: type)
   end
@@ -203,20 +213,38 @@ class Lexer
     end
   end
 
+  ESCAPE_SEQUENCES = {
+    'n'  => "\n",
+    't'  => "\t",
+    'r'  => "\r",
+    '0'  => "\0",
+    "\\" => "\\",
+    "'"  => "'"
+  }.freeze
+
   # Single-quoted string literal. Double quotes raise a LexError.
   def scan_string
-    while peek != "'" && !at_end?
+    value = +''
+    until peek == "'" || at_end?
       if peek == "\n"
         @line += 1
         @line_start = @current + 1
+        value << advance
+      elsif peek == "\\"
+        advance # consume backslash
+        esc = advance
+        resolved = ESCAPE_SEQUENCES[esc]
+        lex_error("unknown escape sequence '\\#{esc}'",
+                  hint: "valid escapes: \\n \\t \\r \\0 \\\\ \\'") unless resolved
+        value << resolved
+      else
+        value << advance
       end
-      advance
     end
 
     lex_error('unterminated string literal', hint: "add a closing ' to end the string") if at_end?
 
     advance # closing '
-    value = @source[(@start + 1)...(@current - 1)]
     add_token(type: TokenType::STRING_LIT, literal: value)
   end
 

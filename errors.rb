@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# rubocop:disable Style/OneClassPerFile
+
 # Base error for all compiler-produced diagnostics.
 # Every error carries:
 #   message  — what went wrong (plain English, no jargon)
@@ -11,7 +13,7 @@
 class SheftError < StandardError
   attr_reader :line, :col, :token, :hint, :phase
 
-  def initialize(msg, line: nil, col: nil, token: nil, hint: nil, phase: :unknown)
+  def initialize(msg, line: nil, col: nil, token: nil, hint: nil, phase: :unknown) # rubocop:disable Metrics/ParameterLists
     super(msg)
     @line  = line
     @col   = col
@@ -24,3 +26,5 @@ end
 class LexError       < SheftError; end
 class ParseError     < SheftError; end
 class TypeCheckError < SheftError; end
+
+# rubocop:enable Style/OneClassPerFile

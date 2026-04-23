@@ -49,7 +49,7 @@ class Parser
   def expect(type, msg = nil)
     return advance if check(type)
 
-    parse_error(msg || "expected '#{token_name(type)}' but found '#{current&.lexeme || 'end of file'}'")
+    parse_error(msg || "Expected #{type}, got #{current&.type} '#{current&.lexeme}' at line #{current&.line}")
   end
 
   def skip_newlines
@@ -60,31 +60,16 @@ class Parser
     current&.type == TokenType::EOF
   end
 
-  def parse_error(msg, line: current&.line, col: current&.col, token: current&.lexeme, hint: nil)
-    raise ParseError.new(msg, line: line, col: col, token: token, hint: hint, phase: :parse)
+  def parse_error(msg, line: current&.line, hint: nil)
+    raise ParseError.new(msg, line: line, hint: hint)
   end
 
   def expect_newline_or_eof
     if check(TokenType::NEWLINE) || at_end?
       skip_newlines
     else
-      parse_error("unexpected '#{current&.lexeme}' — expected a newline or end of file")
+      parse_error("Expected newline, got #{current&.type} '#{current&.lexeme}' at line #{current&.line}")
     end
-  end
-
-  def token_name(type)
-    {
-      TokenType::LPAREN => '(',
-      TokenType::RPAREN => ')',
-      TokenType::COMMA => ',',
-      TokenType::COLON => ':',
-      TokenType::DOT => '.',
-      TokenType::ARROW => '->',
-      TokenType::EQUAL => '=',
-      TokenType::END_KW => 'end',
-      TokenType::ELSE => 'else',
-      TokenType::IDENT => 'identifier'
-    }.fetch(type, type.to_s.downcase)
   end
 
   # ---------- Statements ----------
@@ -159,8 +144,7 @@ class Parser
                                 :void
     when TokenType::IDENT  then advance.lexeme
     else
-      parse_error("expected a type name but found '#{current&.lexeme || 'end of file'}'",
-                  hint: 'valid types are: int, float, string, bool, void')
+      parse_error("Expected type at line #{current&.line}, got #{current&.type}")
     end
   end
 
@@ -259,8 +243,7 @@ class Parser
     case current&.type
     when TokenType::FUNC  then parse_func_decl(pub: true)
     when TokenType::ERROR then parse_error_decl(pub: true)
-    else parse_error("expected 'func' or 'error' after 'pub', found '#{current&.lexeme}'",
-                     hint: 'only functions and error types can be public')
+    else parse_error("Expected declaration after 'pub' at line #{current&.line}")
     end
   end
 
@@ -334,7 +317,7 @@ class Parser
 
   def parse_multiplication
     left = parse_unary
-    while check(TokenType::STAR) || check(TokenType::SLASH)
+    while check(TokenType::STAR) || check(TokenType::SLASH) || check(TokenType::PERCENT)
       op    = advance.lexeme
       right = parse_unary
       left  = AST::BinaryOp.new(op, left, right)
@@ -372,7 +355,11 @@ class Parser
       # ! and ? suffixes are part of the lexeme — already consumed by the lexer
       name = ident_tok.lexeme
       line = ident_tok.line
-      if check(TokenType::LPAREN)
+      if check(TokenType::DOT)
+        advance
+        variant = expect(TokenType::IDENT).lexeme
+        AST::Ident.new("#{name}.#{variant}", line)
+      elsif check(TokenType::LPAREN)
         advance
         args = parse_args
         expect(TokenType::RPAREN)
@@ -381,7 +368,7 @@ class Parser
         AST::Ident.new(name, line)
       end
     else
-      parse_error("unexpected '#{current&.lexeme || 'end of file'}' — expected an expression")
+      parse_error("Unexpected token #{current&.type} '#{current&.lexeme}' at line #{current&.line}")
     end
   end
 

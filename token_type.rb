@@ -35,10 +35,11 @@ module TokenType
   VOID   = :VOID
 
   # --- Arithmetic operators -----------------------------------
-  PLUS  = :PLUS   # +
-  MINUS = :MINUS  # -
-  STAR  = :STAR   # *
-  SLASH = :SLASH  # /
+  PLUS    = :PLUS    # +
+  MINUS   = :MINUS   # -
+  STAR    = :STAR    # *
+  SLASH   = :SLASH   # /
+  PERCENT = :PERCENT # %
 
   # --- Comparison operators -----------------------------------
   EQUAL_EQUAL   = :EQUAL_EQUAL   # ==

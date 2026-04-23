@@ -6,13 +6,13 @@ func in_range(n: int, lo: int, hi: int) -> bool
   return n >= lo and n <= hi
 end
 
-println(is_even(4))
-println(is_even(7))
-println(in_range(5, 1, 10))
-println(in_range(15, 1, 10))
+println(f'{is_even(4)}')
+println(f'{is_even(7)}')
+println(f'{in_range(5, 1, 10)}')
+println(f'{in_range(15, 1, 10)}')
 
 a: bool = true
 b: bool = false
-println(a and b)
-println(a or b)
-println(not a)
+println(f'{a and b}')
+println(f'{a or b}')
+println(f'{not a}')

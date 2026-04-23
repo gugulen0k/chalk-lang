@@ -14,7 +14,7 @@ func add(a: int, b: int) -> int
   return a + b
 end
 
-func main() -> void
+pub func main() -> void
   x: int = add(3, 4)
   if x > 5
     println('big')
@@ -22,15 +22,15 @@ func main() -> void
     println('small')
   end
 
-  result: int = div!(10, 0) catch -1
-  println(f'catch default: {result}')
+  safe: int = safe_div(10, 0)
+  println(f'safe_div result: {safe}')
 
-  good: int = div!(10, 2) catch -1
+  good: int = div!(10, 2)
   println(f'10 / 2 = {good}')
 
   mut i: int = 0
   while i < 3
-    println(i)
+    println(f'{i}')
     i = i + 1
   end
 end

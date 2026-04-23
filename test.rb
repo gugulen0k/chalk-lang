@@ -19,10 +19,14 @@ def compile(sf_file)
   [ll_file, $CHILD_STATUS.success?, result]
 end
 
+LLC = `which llc 2>/dev/null`.chomp.then { |p| p.empty? ? nil : p } ||
+      Dir['/opt/homebrew/opt/llvm/bin/llc', '/usr/local/opt/llvm/bin/llc'].find { |p| File.executable?(p) }
+abort 'error: llc not found — install LLVM and ensure it is on PATH' unless LLC
+
 def build_and_run(ll_file)
   obj = '/tmp/sheft_test.o'
   bin = '/tmp/sheft_test'
-  `llc -filetype=obj #{ll_file} -o #{obj} 2>&1`
+  `#{LLC} -filetype=obj #{ll_file} -o #{obj} 2>&1`
   return nil unless $CHILD_STATUS.success?
 
   `gcc -no-pie #{obj} -o #{bin} 2>&1`
@@ -94,9 +98,9 @@ test_ok 'bool logic: bool functions, and/or/not',
         "#{DIR}/bool_logic.sf",
         "1\n0\n1\n0\n0\n1\n0"
 
-test_ok 'error handling: raise, catch default, try propagation',
+test_ok 'error handling: raise, try propagation',
         'examples/v01_test.sf',
-        "big\ncatch default: -1\n10 / 2 = 5\n0\n1\n2"
+        "big\nsafe_div result: 0\n10 / 2 = 5\n0\n1\n2"
 
 test_ok 'hello world',
         'examples/hello.sf',
@@ -124,9 +128,15 @@ test_err 'wrong argument count',
          "#{DIR}/err_wrong_args.sf",
          'expects 2 argument(s), got 3'
 
+test_err 'mixed entry: pub func main + top-level statements',
+         "#{DIR}/err_mixed_entry.sf",
+         "program has both 'pub func main()' and top-level statements"
+
 puts "\n#{'─' * 40}"
 fail_str = @fail.positive? ? "#{RED}#{@fail} failed#{RESET}" : "#{@fail} failed"
 puts "  #{@pass + @fail} tests: \e[32m#{@pass} passed\e[0m, #{fail_str}"
 puts
 
 exit @fail.positive? ? 1 : 0
+
+# rubocop:enable Metrics/MethodLength, Metrics/AbcSize

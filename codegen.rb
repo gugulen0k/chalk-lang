@@ -10,8 +10,8 @@ require_relative 'parser'
 class Codegen
   INTERP_REGEX = /\{([^}]+)\}/.freeze
 
-  ARITH_INT   = { '+' => 'add',  '-' => 'sub',  '*' => 'mul',  '/' => 'sdiv' }.freeze
-  ARITH_FLOAT = { '+' => 'fadd', '-' => 'fsub', '*' => 'fmul', '/' => 'fdiv' }.freeze
+  ARITH_INT   = { '+' => 'add',  '-' => 'sub',  '*' => 'mul',  '/' => 'sdiv', '%' => 'srem'  }.freeze
+  ARITH_FLOAT = { '+' => 'fadd', '-' => 'fsub', '*' => 'fmul', '/' => 'fdiv', '%' => 'frem'  }.freeze
   ICMP_OPS    = { '==' => 'icmp eq',  '!=' => 'icmp ne',  '<'  => 'icmp slt',
                   '<=' => 'icmp sle', '>'  => 'icmp sgt', '>=' => 'icmp sge' }.freeze
   FCMP_OPS    = { '==' => 'fcmp oeq', '!=' => 'fcmp one', '<'  => 'fcmp olt',
@@ -111,42 +111,11 @@ class Codegen
 
   def lt(t)
     case t
-    when :int    then 'i64'
-    when :float  then 'double'
-    when :bool   then 'i1'
-    when :string then 'i8*'
-    when :void   then 'void'
-    else 'i8*'
-    end
-  end
-
-  def zero_val(type)
-    case type
-    when :int    then '0'
-    when :float  then '0.0'
-    when :bool   then '0'
-    when :string then 'null'
-    else '0'
-    end
-  end
-
-  def infer_type(node)
-    case node
-    when AST::IntLit    then :int
-    when AST::FloatLit  then :float
-    when AST::BoolLit   then :bool
-    when AST::StringLit then :string
-    when AST::Ident     then @locals[node.name]&.dig(:type) || :unknown
-    when AST::BinaryOp
-      l = infer_type(node.left)
-      r = infer_type(node.right)
-      if %w[== != < <= > >=].include?(node.op)
-        :bool
-      else
-        (l == :float || r == :float ? :float : l)
-      end
-    when AST::UnaryOp then node.op == 'not' ? :bool : infer_type(node.operand)
-    else :unknown
+    when :int         then 'i64'
+    when :float       then 'double'
+    when :bool        then 'i1'
+    when :void        then 'void'
+    else                   'i8*'
     end
   end
 
@@ -202,7 +171,7 @@ class Codegen
   def emit_func(node)
     reset_func_state
     @current_ret_type = node.return_type
-    is_main    = node.name == 'main' && node.return_type == :void && node.params.empty?
+    is_main    = node.pub && node.name == 'main' && node.return_type == :void && node.params.empty?
     ret_lt     = is_main ? 'i32' : lt(node.return_type)
     params_str = node.params.map { |p| "#{lt(p.type)} %#{p.name}" }.join(', ')
 
@@ -266,7 +235,7 @@ class Codegen
 
   def emit_assign(node)
     local = @locals[node.target.name]
-    return emit("; undefined '#{node.target.name}'") unless local
+    raise "Codegen: assignment to undefined local '#{node.target.name}'" unless local
 
     ref, type = emit_expr(node.value)
     emit "store #{lt(type)} #{ref}, #{lt(type)}* #{local[:ptr]}"
@@ -338,7 +307,6 @@ class Codegen
   def emit_zero_return
     case @current_ret_type
     when :void   then emit 'ret void'
-    when :int    then emit 'ret i64 0'
     when :float  then emit 'ret double 0.0'
     when :bool   then emit 'ret i1 0'
     when :string then emit 'ret i8* null'
@@ -371,7 +339,7 @@ class Codegen
     when AST::UnaryOp   then emit_unary(node)
     when AST::Call      then emit_call(node)
     when AST::Try       then emit_try(node)
-    else ['0', :int]
+    else raise "Codegen: unhandled expression node #{node.class}"
     end
   end
 
@@ -417,7 +385,7 @@ class Codegen
     reg   = new_reg
 
     case op
-    when '+', '-', '*', '/'
+    when '+', '-', '*', '/', '%'
       instr = use_float ? ARITH_FLOAT[op] : ARITH_INT[op]
       emit "#{reg} = #{instr} #{op_lt} #{lref}, #{rref}"
       [reg, use_float ? :float : ltype]

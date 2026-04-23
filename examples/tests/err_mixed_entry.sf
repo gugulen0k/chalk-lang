@@ -1,0 +1,4 @@
+pub func main() -> void
+end
+
+println('hi')

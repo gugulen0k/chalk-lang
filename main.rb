@@ -53,27 +53,27 @@ module Diagnostic
   end
 
   def self.render_snippet(lines, err)
-    line_num  = err.line
-    src_line  = lines[line_num - 1]
+    src_line = lines[err.line - 1]
     return unless src_line
 
-    gutter    = line_num.to_s
-    pad       = ' ' * gutter.length
-
+    gutter = err.line.to_s
+    pad    = ' ' * gutter.length
     warn "#{pad} #{CYAN}|#{RESET}"
     warn "#{CYAN}#{gutter}#{RESET} #{CYAN}|#{RESET}  #{src_line.rstrip}"
+    render_underline(pad, err)
+  end
 
-    # Draw the ^^^ underline if we have column + token info
+  def self.render_underline(pad, err)
     if err.col
-      token_len = err.token&.length || 1
-      prefix    = ' ' * (err.col - 1) # spaces before the caret
-      carets    = "#{RED}#{'~' * token_len}#{RESET}"
+      prefix = ' ' * (err.col - 1)
+      carets = "#{RED}#{'~' * (err.token&.length || 1)}#{RESET}"
       warn "#{pad} #{CYAN}|#{RESET}  #{prefix}#{carets}"
     else
       warn "#{pad} #{CYAN}|#{RESET}"
     end
   end
-  private_class_method :render_snippet
+
+  private_class_method :render_snippet, :render_underline
 end
 
 # ─────────────────────────────────────────────────────────────
